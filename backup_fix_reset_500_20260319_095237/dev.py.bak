@@ -1,0 +1,63 @@
+﻿from flask import Blueprint, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+
+from .. import db
+from ..models.models import (
+    AlertRule,
+    AuditLog,
+    DataSnapshot,
+    LotAllocation,
+    Notification,
+    PositionLot,
+    RawStatementRow,
+    ReconciliationCase,
+    SavedCalculationScenario,
+    SuggestedTransaction,
+    Transaction,
+    UploadBatch,
+)
+
+dev_bp = Blueprint("dev", __name__, url_prefix="/dev")
+
+
+@dev_bp.route("/reset-data", methods=["POST"])
+@jwt_required()
+def reset_data():
+    user_id = get_jwt_identity()
+
+    batches = UploadBatch.query.filter_by(user_id=user_id).all()
+    batch_ids = [b.id for b in batches]
+
+    transactions = Transaction.query.filter_by(user_id=user_id).all()
+    transaction_ids = [t.id for t in transactions]
+
+    lots = PositionLot.query.filter_by(user_id=user_id).all()
+    lot_ids = [l.id for l in lots]
+
+    if lot_ids:
+        LotAllocation.query.filter(LotAllocation.source_lot_id.in_(lot_ids)).delete(synchronize_session=False)
+
+    if transaction_ids:
+        LotAllocation.query.filter(LotAllocation.target_transaction_id.in_(transaction_ids)).delete(synchronize_session=False)
+        ReconciliationCase.query.filter(ReconciliationCase.transaction_id.in_(transaction_ids)).delete(synchronize_session=False)
+
+    PositionLot.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    ReconciliationCase.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    Transaction.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    SuggestedTransaction.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    SavedCalculationScenario.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    AlertRule.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    Notification.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    DataSnapshot.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+
+    AuditLog.query.filter_by(actor_user_id=user_id).delete(synchronize_session=False)
+    AuditLog.query.filter_by(subject_user_id=user_id).delete(synchronize_session=False)
+
+    if batch_ids:
+        RawStatementRow.query.filter(RawStatementRow.upload_batch_id.in_(batch_ids)).delete(synchronize_session=False)
+
+    UploadBatch.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+
+    db.session.commit()
+
+    return jsonify({"status": "ok"})

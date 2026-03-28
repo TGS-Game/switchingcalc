@@ -1,0 +1,1243 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import client from '../api/client';
+import FileUploader from '../components/FileUploader';
+import ReconciliationPage from './ReconciliationPage';
+
+const UPLOAD_WIZARD_STORAGE_KEY = 'pm_upload_wizard_state_v1';
+
+function formatNumber(value, digits = 4) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return new Intl.NumberFormat('en-GB', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits
+  }).format(num);
+}
+
+function capitalize(value) {
+  const text = String(value || '');
+  if (!text) return '-';
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function getDisplayCodePrefix(lot) {
+  const originType = String(lot?.origin_type || '').toLowerCase();
+  const metal = String(lot?.metal || '').toLowerCase();
+
+  if (originType === 'purchase' && metal === 'gold') return 'PG';
+  if (originType === 'purchase' && metal === 'silver') return 'PS';
+  if (originType === 'switch' && metal === 'gold') return 'SG';
+  if (originType === 'switch' && metal === 'silver') return 'GS';
+  if (originType === 'transfer_in' && metal === 'gold') return 'TG';
+  if (originType === 'transfer_in' && metal === 'silver') return 'TS';
+
+  return 'MT';
+}
+
+function buildDisplayCode(lot, sequenceMap = null) {
+  const lotKey = String(lot?.lot_key || '');
+  const prefix = getDisplayCodePrefix(lot);
+
+  if (sequenceMap && lotKey && sequenceMap[lotKey] != null) {
+    return `${prefix}-${String(sequenceMap[lotKey]).padStart(4, '0')}`;
+  }
+
+  const existingCode = String(lot?.display_code || '');
+  if (existingCode && existingCode.includes('-')) {
+    const parts = existingCode.split('-');
+    const existingPrefix = parts[0];
+    const suffix = parts.slice(1).join('-');
+    if (/^\d+$/.test(suffix)) {
+      return `${existingPrefix}-${suffix.padStart(4, '0')}`;
+    }
+    return existingCode;
+  }
+
+  return `${prefix}-0000`;
+}
+
+function formatHistoryType(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function getDepotFeeSteps(history) {
+  return Array.isArray(history)
+    ? history.filter((step) => String(step?.type || '').toLowerCase() === 'depot_fee')
+    : [];
+}
+
+function getNonDepotHistorySteps(history) {
+  return Array.isArray(history)
+    ? history.filter((step) => String(step?.type || '').toLowerCase() !== 'depot_fee')
+    : [];
+}
+
+function totalDepotFees(history) {
+  return getDepotFeeSteps(history).reduce((sum, step) => {
+    const n = Number(step?.quantity_grams);
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
+
+function getCurrentAvailableQuantity(lot) {
+  const quantity = Number(lot?.quantity_grams);
+  return Number.isFinite(quantity) ? Math.max(0, quantity) : 0;
+}
+
+function getOriginalPurchaseQuantity(lot) {
+  const currentAvailable = getCurrentAvailableQuantity(lot);
+  return currentAvailable + totalDepotFees(lot?.history);
+}
+
+function getTransactionDisplayType(item) {
+  const suggestionType = String(item?.suggestion_type || '').toLowerCase();
+  const type = String(item?.transaction_type || '').toLowerCase();
+
+  if (suggestionType === 'manual_switch') return 'Manual Switch';
+  if (suggestionType === 'switch_pilot') return 'Switch Pilot';
+
+  if (type === 'purchase') return 'Purchase';
+  if (type === 'transfer_in') return 'Transfer In';
+  if (type === 'transfer_out') return 'Transfer Out';
+  if (type === 'sale') return 'Sale';
+
+  return 'Switch';
+}
+
+function getTransactionDisplayMetals(item) {
+  const suggestionType = String(item?.suggestion_type || '').toLowerCase();
+  const sourceMetal = String(item?.source_metal || '').toLowerCase();
+  const targetMetal = String(item?.target_metal || '').toLowerCase();
+  const type = String(item?.transaction_type || '').toLowerCase();
+
+  const isSwitchLike =
+    suggestionType === 'manual_switch' ||
+    suggestionType === 'switch_pilot' ||
+    type === 'switch';
+
+  if (!isSwitchLike) {
+    return {
+      source: '-',
+      target: targetMetal ? capitalize(targetMetal) : '-'
+    };
+  }
+
+  if (suggestionType === 'manual_switch') {
+    return {
+      source: 'To be assigned',
+      target: targetMetal ? capitalize(targetMetal) : '-'
+    };
+  }
+
+  if (sourceMetal && targetMetal && sourceMetal === targetMetal) {
+    return {
+      source: capitalize(sourceMetal),
+      target: '-'
+    };
+  }
+
+  return {
+    source: sourceMetal ? capitalize(sourceMetal) : '-',
+    target: targetMetal ? capitalize(targetMetal) : '-'
+  };
+}
+
+function getTransactionOutputLabel(item) {
+  const displayType = getTransactionDisplayType(item);
+  const metals = getTransactionDisplayMetals(item);
+
+  if (displayType === 'Switch' || displayType === 'Switch Pilot' || displayType === 'Manual Switch') {
+    return metals.target !== '-' ? `Created ${metals.target} grams` : 'Created grams';
+  }
+  if (displayType === 'Transfer Out') return 'Transferred grams';
+  if (displayType === 'Sale') return 'Sold grams';
+  return 'Output grams';
+}
+
+function getTransactionInfoRows(item) {
+  if (!item) return [];
+
+  const displayType = getTransactionDisplayType(item);
+  const metals = getTransactionDisplayMetals(item);
+
+  const rows = [
+    ['Type', displayType],
+    ['Date', item.raw_date || item.transaction_date || '-'],
+    ['Definition', item.raw_definition || '-']
+  ];
+
+  if (displayType === 'Switch' || displayType === 'Switch Pilot' || displayType === 'Manual Switch') {
+    if (metals.source !== '-') rows.push(['Source metal', metals.source]);
+    if (metals.target !== '-') rows.push(['Target metal', metals.target]);
+  } else {
+    if (metals.target !== '-') rows.push(['Metal', metals.target]);
+  }
+
+  rows.push(
+    ['Required source grams', item.required_source_quantity_grams != null ? `${formatNumber(item.required_source_quantity_grams, 6)} g` : 'Set by allocation'],
+    [getTransactionOutputLabel(item), item.output_quantity_grams != null ? `${formatNumber(item.output_quantity_grams, 6)} g` : '-'],
+    ['Ratio', item.raw_gold_silver_ratio || (item.ratio != null ? formatNumber(item.ratio, 6) : '-')]
+  );
+
+  return rows;
+}
+
+function getTransactionMoreDetailRows(item) {
+  if (!item) return [];
+  return [
+    ['Row', item.row_index ?? '-'],
+    ['Paired row', item.paired_row_index ?? '-'],
+    ['Paired row definition', item.paired_raw_definition || '-'],
+    ['Amount (EUR)', item.raw_amount_eur || '-']
+  ];
+}
+
+const ROUNDING_EPSILON = 0.0001;
+
+const compactToggleButtonStyle = (active) => ({
+  flex: '0 0 150px',
+  width: 150,
+  maxWidth: 150,
+  minWidth: 150,
+  minHeight: 28,
+  padding: '6px 10px',
+  fontSize: 11,
+  lineHeight: 1.1,
+  borderRadius: 8,
+  border: '1px solid #cbd5e1',
+  background: active ? '#e2e8f0' : '#ffffff',
+  color: '#111827',
+  cursor: 'pointer',
+  fontWeight: 700,
+  textAlign: 'center',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  boxSizing: 'border-box'
+});
+
+function buildSavedAllocationState(savedAllocations = [], holdings = []) {
+  const holdingsByKey = Object.fromEntries((holdings || []).map((lot) => [lot.lot_key, lot]));
+  const next = {};
+
+  (savedAllocations || []).forEach((row) => {
+    const grams = Number(row?.allocated_quantity_grams);
+    if (!Number.isFinite(grams) || grams <= 0) return;
+
+    const lot = holdingsByKey[row.lot_key];
+    const available = Number(lot?.quantity_grams);
+    const percent = Number.isFinite(available) && available > 0 ? (grams / available) * 100 : 0;
+
+    next[row.lot_key] = {
+      grams,
+      percent
+    };
+  });
+
+  return next;
+}
+
+function JourneyStep({ number, label, active, complete }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '6px 10px',
+        borderRadius: 999,
+        border: active ? '1px solid #0f172a' : '1px solid #cbd5e1',
+        background: active ? '#dbeafe' : complete ? '#ecfdf5' : '#ffffff',
+        color: '#111827',
+        fontSize: 12,
+        fontWeight: 700,
+        whiteSpace: 'nowrap'
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 20,
+          height: 20,
+          borderRadius: 999,
+          background: active ? '#0f172a' : complete ? '#166534' : '#e5e7eb',
+          color: active || complete ? '#ffffff' : '#111827',
+          fontSize: 11
+        }}
+      >
+        {number}
+      </span>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function SmallNavButton({ children, onClick, disabled = false, tone = 'dark' }) {
+  const tones = {
+    dark: {
+      border: '1px solid #0f172a',
+      background: '#0f172a',
+      color: '#ffffff'
+    },
+    gold: {
+      border: '1px solid #b45309',
+      background: '#b45309',
+      color: '#ffffff'
+    },
+    light: {
+      border: '1px solid #cbd5e1',
+      background: '#ffffff',
+      color: '#111827'
+    }
+  };
+
+  const activeTone = tones[tone] || tones.dark;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        width: 'auto',
+        minWidth: 84,
+        maxWidth: 120,
+        padding: '8px 12px',
+        fontSize: 12,
+        lineHeight: 1.1,
+        borderRadius: 7,
+        border: disabled ? '1px solid #cbd5e1' : activeTone.border,
+        background: disabled ? '#f8fafc' : activeTone.background,
+        color: disabled ? '#94a3b8' : activeTone.color,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontWeight: 700,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: '0 0 auto'
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function AllocationWorkbench({ onComplete }) {
+  const [data, setData] = useState({ items: [], available_holdings: [], available_holdings_by_transaction: {} });
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [selectedTxId, setSelectedTxId] = useState('');
+  const [allocations, setAllocations] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [infoLot, setInfoLot] = useState(null);
+  const [infoTransaction, setInfoTransaction] = useState(null);
+  const [showDepotFees, setShowDepotFees] = useState(false);
+  const [showAncestry, setShowAncestry] = useState(false);
+  const [showMoreDetails, setShowMoreDetails] = useState(false);
+  const [showTransactionMoreDetails, setShowTransactionMoreDetails] = useState(false);
+
+  const refresh = async (preferredTxId = '') => {
+    setLoading(true);
+    setMessage('');
+    setLoadError('');
+
+    try {
+      const response = await client.get('/reconciliation/pending-allocations?kind=all');
+      const nextData = response?.data || { items: [], available_holdings: [], available_holdings_by_transaction: {} };
+      const items = Array.isArray(nextData.items) ? nextData.items : [];
+
+      setData({
+        items,
+        available_holdings: Array.isArray(nextData.available_holdings) ? nextData.available_holdings : [],
+        available_holdings_by_transaction: nextData.available_holdings_by_transaction || {}
+      });
+
+      if (!items.length) {
+        setSelectedTxId('');
+        return;
+      }
+
+      const targetId =
+        (preferredTxId && items.some((x) => x.transaction_id === preferredTxId) && preferredTxId) ||
+        (selectedTxId && items.some((x) => x.transaction_id === selectedTxId) && selectedTxId) ||
+        items[0].transaction_id;
+
+      setSelectedTxId(targetId);
+    } catch (error) {
+      const apiMessage =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to load pending allocations';
+
+      setData({ items: [], available_holdings: [], available_holdings_by_transaction: {} });
+      setSelectedTxId('');
+      setLoadError(apiMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const totalItems = (data.items || []).length;
+
+  const currentIndex = useMemo(() => {
+    const idx = (data.items || []).findIndex((x) => x.transaction_id === selectedTxId);
+    return idx >= 0 ? idx : 0;
+  }, [data, selectedTxId]);
+
+  const selectedItem = useMemo(() => {
+    return (data.items || []).find((x) => x.transaction_id === selectedTxId) || (data.items || [])[0] || null;
+  }, [data, selectedTxId]);
+
+  const availableHoldings = useMemo(() => {
+    if (!selectedItem) return [];
+
+    const txId = selectedItem.transaction_id;
+    const allHoldings =
+      (txId && data.available_holdings_by_transaction && data.available_holdings_by_transaction[txId]) ||
+      data.available_holdings ||
+      [];
+
+    const sourceMetal = String(selectedItem.source_metal || '').toLowerCase();
+    if (!sourceMetal) return allHoldings;
+
+    return allHoldings.filter((x) => String(x.metal || '').toLowerCase() === sourceMetal);
+  }, [data, selectedItem]);
+
+  useEffect(() => {
+    setAllocations(buildSavedAllocationState(selectedItem?.resolved_allocations || [], availableHoldings));
+    setMessage('');
+  }, [selectedTxId, selectedItem, availableHoldings]);
+
+  const displayCodeSequenceMap = useMemo(() => {
+    const counters = {};
+    const nextMap = {};
+
+    availableHoldings.forEach((lot) => {
+      const prefix = getDisplayCodePrefix(lot);
+      counters[prefix] = (counters[prefix] || 0) + 1;
+      if (lot?.lot_key) {
+        nextMap[lot.lot_key] = counters[prefix];
+      }
+    });
+
+    return nextMap;
+  }, [availableHoldings]);
+
+  const required = useMemo(() => {
+    const value = Number(selectedItem?.required_source_quantity_grams);
+    return Number.isFinite(value) ? value : null;
+  }, [selectedItem]);
+
+  const totalAllocated = useMemo(() => {
+    return Object.values(allocations).reduce((sum, row) => {
+      const n = Number(row?.grams);
+      return sum + (Number.isFinite(n) ? n : 0);
+    }, 0);
+  }, [allocations]);
+
+  const remaining = useMemo(() => {
+    if (required == null) return null;
+    return required - totalAllocated;
+  }, [required, totalAllocated]);
+
+  const isLastItem = totalItems > 0 && currentIndex === totalItems - 1;
+
+  const currentLabel = useMemo(() => {
+    return getTransactionDisplayType(selectedItem);
+  }, [selectedItem]);
+
+  const renderNavButtons = () => (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 12, marginBottom: 12 }}>
+      <SmallNavButton onClick={goPrev} disabled={saving || currentIndex === 0} tone='dark'>
+        Back
+      </SmallNavButton>
+      <SmallNavButton onClick={resetAllocations} disabled={saving} tone='light'>
+        Reset
+      </SmallNavButton>
+      <SmallNavButton onClick={saveAllocations} disabled={saving} tone='gold'>
+        {saving ? 'Saving...' : (isLastItem ? 'Finish' : 'Next')}
+      </SmallNavButton>
+    </div>
+  );
+
+  const updateGrams = (lot, gramsValue) => {
+    const available = getCurrentAvailableQuantity(lot);
+    const requested = Math.max(0, Number(gramsValue) || 0);
+
+    const currentForThisLot = Number(allocations[lot.lot_key]?.grams) || 0;
+    const allocatedExcludingThisLot = totalAllocated - currentForThisLot;
+
+    let maxAllowed = available;
+    if (required != null) {
+      maxAllowed = Math.min(available, Math.max(0, required - allocatedExcludingThisLot));
+    }
+
+    const grams = Math.max(0, Math.min(requested, maxAllowed));
+    const percent = available > 0 ? (grams / available) * 100 : 0;
+
+    setAllocations((prev) => ({
+      ...prev,
+      [lot.lot_key]: {
+        grams,
+        percent
+      }
+    }));
+  };
+
+  const updatePercent = (lot, percentValue) => {
+    const available = getCurrentAvailableQuantity(lot);
+    const requestedPercent = Math.max(0, Math.min(Number(percentValue) || 0, 100));
+    const requestedGrams = available * (requestedPercent / 100);
+
+    const currentForThisLot = Number(allocations[lot.lot_key]?.grams) || 0;
+    const allocatedExcludingThisLot = totalAllocated - currentForThisLot;
+
+    let maxAllowed = available;
+    if (required != null) {
+      maxAllowed = Math.min(available, Math.max(0, required - allocatedExcludingThisLot));
+    }
+
+    const grams = Math.max(0, Math.min(requestedGrams, maxAllowed));
+    const percent = available > 0 ? (grams / available) * 100 : 0;
+
+    setAllocations((prev) => ({
+      ...prev,
+      [lot.lot_key]: {
+        grams,
+        percent
+      }
+    }));
+  };
+
+  const resetAllocations = () => {
+    setAllocations({});
+    setMessage('');
+  };
+
+  const goPrev = () => {
+    if (currentIndex <= 0) return;
+    const prev = data.items[currentIndex - 1];
+    if (prev) setSelectedTxId(prev.transaction_id);
+  };
+
+  const saveAllocations = async () => {
+    if (!selectedItem?.transaction_id) return;
+
+    const payload = {
+      allocations: availableHoldings
+        .map((lot) => ({
+          lot_key: lot.lot_key,
+          allocated_quantity_grams: allocations[lot.lot_key]?.grams || 0
+        }))
+        .filter((x) => Number(x.allocated_quantity_grams) > 0)
+    };
+
+    if (!payload.allocations.length) {
+      window.alert('Please allocate at least one holding.');
+      return;
+    }
+
+    setSaving(true);
+    setMessage('');
+    try {
+      const response = await client.post(`/reconciliation/cases/${selectedItem.transaction_id}/resolve-allocations`, payload);
+      const totalAllocatedGrams = response.data?.total_allocated_grams;
+      const itemsBefore = data.items || [];
+      const nextPreferredId = itemsBefore[currentIndex + 1]?.transaction_id || '';
+
+      await refresh(nextPreferredId);
+      setAllocations({});
+
+      if (isLastItem) {
+        window.alert('All items have been assigned.');
+        setMessage('All items have been assigned.');
+      } else {
+        setMessage(`Saved and approved. Total allocated: ${formatNumber(totalAllocatedGrams, 6)} g.`);
+      }
+    } catch (error) {
+      const apiMessage = error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Failed to save allocations';
+      window.alert(apiMessage);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="card"><p>Loading assignments...</p></div>;
+  }
+
+  if (!(data.items || []).length) {
+    return (
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Pending Assignments</h3>
+        <p style={{ marginBottom: 0 }}>No pending switch, sale, or transfer-out allocations right now.</p>
+      </div>
+    );
+  }
+
+
+  return (
+    <div className="stack">      <div className="card" style={{ padding: 12 }}>
+        <h3 style={{ marginTop: 0, marginBottom: 6 }}>Pending Assignments</h3>
+        <div style={{ fontSize: 13, color: '#334155', marginBottom: 12 }}>
+          {currentIndex + 1}/{totalItems} items
+        </div>
+
+        <div
+          style={{
+            border: '1px solid #cbd5e1',
+            borderRadius: 10,
+            background: '#fff'
+          }}
+        >
+          <div style={{ padding: 12, borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(360px, 2fr) minmax(280px, 1fr) 40px',
+                gap: 16,
+                alignItems: 'start'
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 15, lineHeight: 1.35 }}>
+                  <strong>{currentLabel}</strong> - {selectedItem?.raw_date || selectedItem?.transaction_date || '-'}
+                </div>
+                <div style={{ fontSize: 13, color: '#475569', marginTop: 4 }}>
+                  {selectedItem?.raw_definition || selectedItem?.notes || '-'}
+                </div>
+                <div style={{ fontSize: 12, marginTop: 8, color: '#334155' }}>
+                  {getTransactionOutputLabel(selectedItem)}: {selectedItem?.output_quantity_grams != null ? formatNumber(selectedItem.output_quantity_grams, 6) : '-'}
+                </div>
+              </div>
+
+              <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+                <div><strong>Metal:</strong> {selectedItem?.source_metal ? capitalize(selectedItem.source_metal) : '-'}</div>
+                <div><strong>Required source grams:</strong> {required != null ? formatNumber(required, 6) : 'Set by allocation'}</div>
+                <div><strong>Allocated so far:</strong> {formatNumber(totalAllocated, 6)}</div>
+                {remaining != null ? <div><strong>Remaining to allocate:</strong> {formatNumber(remaining, 6)}</div> : null}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setInfoTransaction(selectedItem);
+                  setShowTransactionMoreDetails(false);
+                }}
+                title="Show transaction details"
+                style={{
+                  width: 28,
+                  height: 28,
+                  minWidth: 28,
+                  padding: 0,
+                  fontSize: 14,
+                  lineHeight: 1,
+                  fontWeight: 700,
+                  borderRadius: 999,
+                  border: '1px solid #94a3b8',
+                  background: '#fff',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  boxSizing: 'border-box',
+                  color: '#0f172a',
+                  fontFamily: 'Arial, sans-serif',
+                  textAlign: 'center',
+                  textTransform: 'none'
+                }}
+              >
+                i
+              </button>
+            </div>
+          </div>
+
+          <div style={{ padding: 12 }}>
+            {renderNavButtons()}
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1080 }}>
+                <thead>
+                  <tr style={{ background: '#e2e8f0' }}>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Info</th>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Metal</th>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Available Grams</th>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Ratio</th>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Code</th>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Date</th>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Original Purchase Date</th>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Allocate Grams</th>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Allocate %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {availableHoldings.map((lot) => {
+                    const row = allocations[lot.lot_key] || { grams: 0, percent: 0 };
+                    const availableNow = getCurrentAvailableQuantity(lot);
+                    const enteredGrams = Math.max(0, Number(row.grams) || 0);
+                    const rawDisplayedAvailable = Math.max(0, availableNow - enteredGrams);
+                    const displayedAvailable = rawDisplayedAvailable <= (ROUNDING_EPSILON + 0.0000001) ? 0 : rawDisplayedAvailable;
+                    return (
+                      <tr key={lot.lot_key}>
+                        <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInfoLot(lot);
+                              setShowDepotFees(false);
+                              setShowAncestry(false);
+                              setShowMoreDetails(false);
+                            }}
+                            title="Show source import details"
+                            style={{
+                              width: 28,
+                              height: 28,
+                              minWidth: 28,
+                              padding: 0,
+                              fontSize: 14,
+                              lineHeight: 1,
+                              fontWeight: 700,
+                              borderRadius: 999,
+                              border: '1px solid #94a3b8',
+                              background: '#fff',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flex: '0 0 auto',
+                              boxSizing: 'border-box',
+                              color: '#0f172a',
+                              fontFamily: 'Arial, sans-serif',
+                              textAlign: 'center',
+                              textTransform: 'none',
+                  color: '#0f172a',
+                  fontFamily: 'Arial, sans-serif',
+                  textAlign: 'center',
+                  textTransform: 'none'
+                            }}
+                          >
+                            i
+                          </button>
+                        </td>
+                        <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>
+                          {capitalize(lot.metal)}
+                        </td>
+                        <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>{formatNumber(displayedAvailable, 6)}</td>
+                        <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>{lot.basis_ratio != null ? formatNumber(lot.basis_ratio, 2) : '-'}</td>
+                        <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>{buildDisplayCode(lot, displayCodeSequenceMap)}</td>
+                        <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>{lot.opened_on || '-'}</td>
+                        <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>{lot.original_purchase_date || '-'}</td>
+                        <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>
+                          <input
+                            type="number"
+                            step="0.000001"
+                            min="0"
+                            max={availableNow}
+                            value={row.grams}
+                            onChange={(e) => updateGrams(lot, e.target.value)}
+                            style={{ width: 110, padding: 6 }}
+                          />
+                        </td>
+                        <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="100"
+                            value={row.percent}
+                            onChange={(e) => updatePercent(lot, e.target.value)}
+                            style={{ width: 90, padding: 6 }}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {renderNavButtons()}
+
+            {message ? (
+              <div style={{ marginTop: 10, color: '#166534', fontWeight: 600, fontSize: 13 }}>{message}</div>
+            ) : null}
+          </div>
+        </div>
+
+        {infoTransaction ? (
+          <div
+            onClick={() => {
+              setInfoTransaction(null);
+              setShowTransactionMoreDetails(false);
+            }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 24,
+              zIndex: 10000
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: '100%',
+                maxWidth: 760,
+                background: '#fff',
+                borderRadius: 12,
+                padding: 18,
+                boxShadow: '0 20px 40px rgba(0,0,0,0.25)'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 12 }}>
+                <h3 style={{ margin: 0, lineHeight: 1.1 }}>Transaction<br />Details</h3>
+                <button
+                  onClick={() => {
+                    setInfoTransaction(null);
+                    setShowTransactionMoreDetails(false);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '9px 16px',
+                    borderRadius: 10,
+                    border: '1px solid #0f172a',
+                    background: '#0f172a',
+                    color: '#fff',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  justifyContent: 'flex-start',
+                  alignItems: 'center',
+                  marginBottom: 10
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowTransactionMoreDetails((prev) => !prev)}
+                  style={compactToggleButtonStyle(showTransactionMoreDetails)}
+                >
+                  {showTransactionMoreDetails ? 'Hide more details' : 'More details'}
+                </button>
+              </div>
+
+              <div
+                style={{
+                  maxHeight: 420,
+                  overflowY: 'auto',
+                  paddingRight: 6,
+                  display: 'grid',
+                  gap: 14
+                }}
+              >
+                <div style={{ display: 'grid', gap: 8, fontSize: 14 }}>
+                  {getTransactionInfoRows(infoTransaction).map(([label, value]) => (
+                    <div key={label}><strong>{label}:</strong> {value || '-'}</div>
+                  ))}
+
+                  {showTransactionMoreDetails ? (
+                    <>
+                      <div style={{ height: 1, background: '#e2e8f0', margin: '4px 0 8px 0' }} />
+                      {getTransactionMoreDetailRows(infoTransaction).map(([label, value]) => (
+                        <div key={label}><strong>{label}:</strong> {value || '-'}</div>
+                      ))}
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {infoLot ? (
+          <div
+            onClick={() => {
+              setInfoLot(null);
+              setShowDepotFees(false);
+              setShowAncestry(false);
+              setShowMoreDetails(false);
+            }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 24,
+              zIndex: 9999
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: '100%',
+                maxWidth: 760,
+                background: '#fff',
+                borderRadius: 12,
+                padding: 18,
+                boxShadow: '0 20px 40px rgba(0,0,0,0.25)'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 12 }}>
+                <h3 style={{ margin: 0, lineHeight: 1.1 }}>Holding<br />Details</h3>
+                <button
+                  onClick={() => {
+                    setInfoLot(null);
+                    setShowDepotFees(false);
+                    setShowAncestry(false);
+                    setShowMoreDetails(false);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '9px 16px',
+                    borderRadius: 10,
+                    border: '1px solid #0f172a',
+                    background: '#0f172a',
+                    color: '#fff',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  justifyContent: 'flex-start',
+                  alignItems: 'center',
+                  marginBottom: 10
+                }}
+              >
+                {getNonDepotHistorySteps(infoLot.history).length ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAncestry((prev) => !prev)}
+                    style={compactToggleButtonStyle(showAncestry)}
+                  >
+                    {showAncestry ? 'Hide ancestry' : 'Show ancestry'}
+                  </button>
+                ) : null}
+
+                {getDepotFeeSteps(infoLot.history).length ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowDepotFees((prev) => !prev)}
+                    style={compactToggleButtonStyle(showDepotFees)}
+                  >
+                    {showDepotFees ? 'Hide depot fees' : 'Show depot fees'}
+                  </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={() => setShowMoreDetails((prev) => !prev)}
+                  style={compactToggleButtonStyle(showMoreDetails)}
+                >
+                  {showMoreDetails ? 'Hide more details' : 'More details'}
+                </button>
+              </div>
+
+              <div
+                style={{
+                  maxHeight: 420,
+                  overflowY: 'auto',
+                  paddingRight: 6,
+                  display: 'grid',
+                  gap: 14
+                }}
+              >
+                <div style={{ display: 'grid', gap: 8, fontSize: 14 }}>
+                  <div><strong>Code:</strong> {buildDisplayCode(infoLot, displayCodeSequenceMap)}</div>
+                  <div><strong>Opened:</strong> {infoLot.opened_on || '-'}</div>
+                  <div><strong>Metal:</strong> {capitalize(infoLot.metal)}</div>
+                  <div><strong>Available metal:</strong> {formatNumber(getCurrentAvailableQuantity(infoLot), 6)} g</div>
+                  <div><strong>Ratio:</strong> {infoLot.source_meta?.raw_gold_silver_ratio || '-'}</div>
+
+                  {showMoreDetails ? (
+                    <>
+                      <div style={{ height: 1, background: '#e2e8f0', margin: '4px 0 8px 0' }} />
+                      <div><strong>Metal at purchase:</strong> {formatNumber(getOriginalPurchaseQuantity(infoLot), 6)} g</div>
+                      <div><strong>Total depot fees:</strong> {formatNumber(totalDepotFees(infoLot.history), 6)} g</div>
+                      <div><strong>Origin type:</strong> {formatHistoryType(infoLot.origin_type || '-')}</div>
+                      <div><strong>Row:</strong> {infoLot.source_meta?.row_index ?? '-'}</div>
+                      <div><strong>Definition:</strong> {infoLot.source_meta?.raw_definition || '-'}</div>
+                      <div><strong>Amount (EUR):</strong> {infoLot.source_meta?.raw_amount_eur || '-'}</div>
+                    </>
+                  ) : null}
+                </div>
+
+                {showAncestry && getNonDepotHistorySteps(infoLot.history).length ? (
+                  <div>
+                    <h4 style={{ marginBottom: 8, marginTop: 0 }}>Ancestry</h4>
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      {getNonDepotHistorySteps(infoLot.history).map((step, idx) => (
+                        <div key={idx} style={{ padding: 8, background: '#f8fafc', borderRadius: 8, fontSize: 13 }}>
+                          <strong>{formatHistoryType(step.type || '-')}</strong> | {step.date || '-'} | {step.quantity_grams != null ? formatNumber(step.quantity_grams, 6) : '-'} g
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {showDepotFees && getDepotFeeSteps(infoLot.history).length ? (
+                  <div>
+                    <h4 style={{ marginTop: 0, marginBottom: 8 }}>Depot Fees</h4>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                      Total depot fees: {formatNumber(totalDepotFees(infoLot.history), 6)} g
+                    </div>
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      {getDepotFeeSteps(infoLot.history).map((step, idx) => (
+                        <div key={idx} style={{ padding: 8, background: '#f8fafc', borderRadius: 8, fontSize: 13 }}>
+                          <strong>{formatHistoryType(step.type)}</strong> | {step.date || '-'} | {step.quantity_grams != null ? formatNumber(step.quantity_grams, 6) : '-'} g
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export default function UploadPage() {
+  const [uploadResult, setUploadResult] = useState(null);
+  const [reviewKey, setReviewKey] = useState(0);
+  const [step, setStep] = useState('upload');
+  const [isComplete, setIsComplete] = useState(false);
+  const [hasRestoredState, setHasRestoredState] = useState(false);
+  const reviewRef = useRef(null);
+  const steps = ['upload', 'assign', 'allocate'];
+  const currentIndex = steps.indexOf(step);
+
+  const saveWizardState = (nextState) => {
+    try {
+      localStorage.setItem(UPLOAD_WIZARD_STORAGE_KEY, JSON.stringify(nextState));
+    } catch (error) {
+      console.warn('Failed to save wizard state', error);
+    }
+  };
+
+  const clearWizardState = () => {
+    try {
+      localStorage.removeItem(UPLOAD_WIZARD_STORAGE_KEY);
+    } catch (error) {
+      console.warn('Failed to clear wizard state', error);
+    }
+  };
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(UPLOAD_WIZARD_STORAGE_KEY);
+      if (!raw) {
+        setHasRestoredState(true);
+        return;
+      }
+
+      const saved = JSON.parse(raw);
+      if (saved && typeof saved === 'object') {
+        setUploadResult(saved.uploadResult ?? null);
+        setReviewKey(saved.reviewKey ?? 0);
+        setStep(saved.step || 'upload');
+        setIsComplete(!!saved.isComplete);
+      }
+    } catch (error) {
+      console.warn('Failed to restore wizard state', error);
+    } finally {
+      setHasRestoredState(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hasRestoredState) return;
+
+    saveWizardState({
+      uploadResult,
+      reviewKey,
+      step,
+      isComplete
+    });
+  }, [uploadResult, reviewKey, step, isComplete, hasRestoredState]);
+
+  useEffect(() => {
+    if (!uploadResult || uploadResult.error || isComplete) return;
+    if (step !== 'upload') return;
+
+    setStep('assign');
+
+    const timer = setTimeout(() => {
+      reviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [uploadResult, isComplete, step]);
+  const handleUploaded = (result) => {
+    setUploadResult(result);
+    setIsComplete(false);
+    if (!result?.error) {
+      setReviewKey((prev) => prev + 1);
+      setStep('assign');
+    }
+  };
+  const goNext = () => {
+    const next = steps[Math.min(currentIndex + 1, steps.length - 1)];
+    setStep(next);
+  };
+  const goPrev = () => {
+    const prev = steps[Math.max(currentIndex - 1, 0)];
+    setStep(prev);
+  };
+
+  const completeWorkflow = () => {
+    setIsComplete(true);
+    setStep('upload');
+    setUploadResult(null);
+    setReviewKey((prev) => prev + 1);
+    clearWizardState();
+    window.alert('All done. Your upload, category assignment, and holdings assignment are complete.');
+  };
+
+  const startNewUpload = () => {
+    setIsComplete(false);
+    setStep('upload');
+    setUploadResult(null);
+    setReviewKey((prev) => prev + 1);
+    clearWizardState();
+  };
+  const renderAssignNavButtons = (position) => (
+    <div style={{ display: 'flex', gap: 8, marginTop: position === 'bottom' ? 0 : 4, marginBottom: position === 'top' ? 4 : 0 }}>
+      <SmallNavButton onClick={goPrev} tone='dark'>Back</SmallNavButton>
+      <SmallNavButton onClick={goNext} tone='gold'>Next</SmallNavButton>
+    </div>
+  );
+
+  if (!hasRestoredState) {
+    return <div className="card"><p>Loading upload workflow...</p></div>;
+  }
+
+  return (
+    <div className="stack">      <div className="card" style={{ padding: 12 }}>
+        <h2 style={{ marginTop: 0, marginBottom: 10 }}>Upload & Assign</h2>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <JourneyStep number="1" label="Upload" active={step === 'upload'} complete={!!uploadResult && !uploadResult.error} />
+          <span style={{ color: '#64748b', fontSize: 12 }}>-&gt;</span>
+          <JourneyStep number="2" label="Assign Category" active={step === 'assign'} complete={step === 'allocate'} />
+          <span style={{ color: '#64748b', fontSize: 12 }}>-&gt;</span>
+          <JourneyStep number="3" label="Assign Holdings" active={step === 'allocate'} complete={false} />
+        </div>
+      </div>
+
+      {isComplete ? (
+        <div className="card" style={{ border: '1px solid #16a34a', background: '#f0fdf4' }}>
+          <h3 style={{ marginTop: 0, marginBottom: 10 }}>Workflow complete</h3>
+          <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+            <div>All uploaded transactions have been reviewed and the holdings workflow is complete.</div>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <SmallNavButton onClick={startNewUpload} tone='gold'>Upload More</SmallNavButton>
+          </div>
+        </div>
+      ) : null}
+
+      {!isComplete && step === 'upload' ? (
+        <>          <FileUploader onUploaded={handleUploaded} />
+
+          {uploadResult ? (
+            <div
+              className="card"
+              style={{
+                border: uploadResult.error ? '1px solid #dc2626' : '1px solid #16a34a',
+                background: uploadResult.error ? '#fef2f2' : '#f0fdf4'
+              }}
+            >
+              <h3 style={{ marginTop: 0, marginBottom: 10 }}>
+                {uploadResult.error ? 'Upload failed' : 'Upload complete'}
+              </h3>
+
+              <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+                <div><strong>File:</strong> {uploadResult.fileName || '-'}</div>
+                {!uploadResult.error ? (
+                  <>
+                    <div><strong>New rows processed:</strong> {uploadResult.newRowCount}</div>
+                    <div><strong>Duplicate rows skipped:</strong> {uploadResult.skippedDuplicateCount}</div>
+                    <div><strong>Rows ready to assign:</strong> {uploadResult.suggestionCount}</div>
+                  </>
+                ) : null}
+                <div style={{ marginTop: 8 }}>{uploadResult.message}</div>
+              </div>
+
+              {!uploadResult.error ? (
+                <div style={{ marginTop: 12 }}>
+                  <SmallNavButton onClick={() => setStep('assign')} tone='gold'>Next</SmallNavButton>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {!isComplete && step === 'assign' ? (        <div ref={reviewRef} className="stack">
+          {renderAssignNavButtons('top')}
+          <ReconciliationPage key={reviewKey} embedded />
+          {renderAssignNavButtons('bottom')}
+        </div>
+      ) : null}
+
+      {!isComplete && step === 'allocate' ? (
+        <div className="stack">
+          <AllocationWorkbench />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <SmallNavButton onClick={goPrev} tone='dark'>Back</SmallNavButton>
+            <SmallNavButton onClick={completeWorkflow} tone='gold'>Finish</SmallNavButton>
+          </div>
+        </div>
+      ) : null}    </div>
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

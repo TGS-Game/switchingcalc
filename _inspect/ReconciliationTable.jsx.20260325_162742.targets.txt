@@ -1,0 +1,942 @@
+﻿
+==== TARGET BLOCK: pattern [function\s+TransactionsPage] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [const\s+TransactionsPage] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [useState] at line 1 ====
+0001: import { useEffect, useMemo, useRef, useState } from 'react';
+0002: import client from '../api/client';
+0003: 
+0004: const cellStyle = {
+0005:   padding: '4px 5px',
+0006:   borderBottom: '1px solid #d1d5db',
+0007:   verticalAlign: 'middle',
+0008:   fontSize: 12,
+0009:   lineHeight: 1.1
+0010: };
+0011: 
+0012: const selectStyle = {
+0013:   width: '100%',
+0014:   boxSizing: 'border-box',
+0015:   padding: '3px 5px',
+0016:   fontSize: 12,
+0017:   border: '1px solid #cbd5e1',
+0018:   borderRadius: 4,
+0019:   background: '#fff'
+0020: };
+0021: 
+0022: const ratioStyle = {
+0023:   width: '60px',
+0024:   boxSizing: 'border-box',
+0025:   padding: '3px 4px',
+0026:   fontSize: 12,
+0027:   border: '1px solid #cbd5e1',
+0028:   borderRadius: 4,
+0029:   background: '#fff'
+0030: };
+0031: 
+0032: const gramsStyle = {
+0033:   width: '84px',
+0034:   boxSizing: 'border-box',
+0035:   padding: '3px 4px',
+0036:   fontSize: 12,
+0037:   border: '1px solid #cbd5e1',
+0038:   borderRadius: 4,
+0039:   background: '#fff'
+0040: };
+0041: 
+0042: const compactNotesStyle = {
+0043:   width: '120px',
+0044:   minWidth: '120px',
+0045:   maxWidth: '120px',
+0046:   height: '24px',
+0047:   resize: 'none',
+0048:   overflow: 'hidden',
+0049:   boxSizing: 'border-box',
+0050:   padding: '3px 5px',
+0051:   fontSize: 12,
+
+==== TARGET BLOCK: pattern [useMemo] at line 1 ====
+0001: import { useEffect, useMemo, useRef, useState } from 'react';
+0002: import client from '../api/client';
+0003: 
+0004: const cellStyle = {
+0005:   padding: '4px 5px',
+0006:   borderBottom: '1px solid #d1d5db',
+0007:   verticalAlign: 'middle',
+0008:   fontSize: 12,
+0009:   lineHeight: 1.1
+0010: };
+0011: 
+0012: const selectStyle = {
+0013:   width: '100%',
+0014:   boxSizing: 'border-box',
+0015:   padding: '3px 5px',
+0016:   fontSize: 12,
+0017:   border: '1px solid #cbd5e1',
+0018:   borderRadius: 4,
+0019:   background: '#fff'
+0020: };
+0021: 
+0022: const ratioStyle = {
+0023:   width: '60px',
+0024:   boxSizing: 'border-box',
+0025:   padding: '3px 4px',
+0026:   fontSize: 12,
+0027:   border: '1px solid #cbd5e1',
+0028:   borderRadius: 4,
+0029:   background: '#fff'
+0030: };
+0031: 
+0032: const gramsStyle = {
+0033:   width: '84px',
+0034:   boxSizing: 'border-box',
+0035:   padding: '3px 4px',
+0036:   fontSize: 12,
+0037:   border: '1px solid #cbd5e1',
+0038:   borderRadius: 4,
+0039:   background: '#fff'
+0040: };
+0041: 
+0042: const compactNotesStyle = {
+0043:   width: '120px',
+0044:   minWidth: '120px',
+0045:   maxWidth: '120px',
+0046:   height: '24px',
+0047:   resize: 'none',
+0048:   overflow: 'hidden',
+0049:   boxSizing: 'border-box',
+0050:   padding: '3px 5px',
+0051:   fontSize: 12,
+
+==== TARGET BLOCK: pattern [filteredTransactions] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [transactions\.map] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [\.map\(] at line 553 ====
+0503: 
+0504:       setEditingId('');
+0505: 
+0506:       if (needsHoldingsAssignment(finalType)) {
+0507:         const nextWizardState = {
+0508:           uploadResult: null,
+0509:           reviewKey: 0,
+0510:           step: 'allocate',
+0511:           isComplete: false
+0512:         };
+0513:         localStorage.setItem('pm_upload_wizard_state_v1', JSON.stringify(nextWizardState));
+0514:         window.location.href = '/upload';
+0515:         return;
+0516:       }
+0517: 
+0518:       await refresh();
+0519:     } finally {
+0520:       setSavingId('');
+0521:     }
+0522:   };
+0523: 
+0524:   const toggleSelected = (id) => {
+0525:     setSelectedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+0526:   };
+0527: 
+0528:   const allVisibleSelected = useMemo(() => {
+0529:     if (!orderedCases.length) return false;
+0530:     return orderedCases.every((item) => !!selectedIds[item.id]);
+0531:   }, [orderedCases, selectedIds]);
+0532: 
+0533:   const toggleSelectAll = () => {
+0534:     const next = {};
+0535:     if (!allVisibleSelected) {
+0536:       orderedCases.forEach((item) => {
+0537:         next[item.id] = true;
+0538:       });
+0539:     }
+0540:     setSelectedIds(next);
+0541:   };
+0542: 
+0543:   const bulkAction = async (action) => {
+0544:     const selectedItems = orderedCases.filter((item) => selectedIds[item.id]);
+0545:     if (!selectedItems.length) {
+0546:       window.alert('No visible rows are selected.');
+0547:       return;
+0548:     }
+0549: 
+0550:     setBulkMessage('');
+0551: 
+0552:     const payload = {
+0553:       items: selectedItems.map((item) => {
+0554:         const draft = getDraft(item);
+0555:         return {
+0556:           suggestion_id: item.id,
+0557:           action,
+0558:           suggestion_type: draft.suggestion_type,
+0559:           metal: draft.metal,
+0560:           from_metal: draft.from_metal,
+0561:           to_metal: draft.to_metal,
+0562:           quantity_grams: draft.quantity_grams,
+0563:           to_quantity_grams: draft.to_quantity_grams,
+0564:           ratio: draft.ratio,
+0565:           notes: draft.notes,
+0566:         };
+0567:       })
+0568:     };
+0569: 
+0570:     setSavingId('bulk');
+0571:     try {
+0572:       const response = await client.post('/reconciliation/bulk-resolve', payload);
+0573:       const results = response.data?.results || [];
+0574:       const errors = response.data?.errors || [];
+0575: 
+0576:       const processedIds = results
+0577:         .filter((x) => ['confirmed', 'amended', 'ignored', 'rejected'].includes(x.review_status))
+0578:         .map((x) => x.id);
+0579: 
+0580:       if (processedIds.length) {
+0581:         removeProcessedLocally(processedIds);
+0582:       }
+0583: 
+0584:       if (errors.length) {
+0585:         setBulkMessage(`${results.length} row(s) processed. ${errors.length} row(s) need attention before they can be completed.`);
+0586:       } else if (results.length) {
+0587:         setBulkMessage(`${results.length} row(s) processed successfully.`);
+0588:       }
+0589: 
+0590:       if (currentStatus !== 'pending') {
+0591:         await refresh();
+0592:       }
+0593:     } finally {
+0594:       setSavingId('');
+0595:     }
+0596:   };
+0597: 
+0598:   if (!orderedCases.length) {
+0599:     return <div className="card"><p>No items currently need review.</p></div>;
+0600:   }
+0601: 
+0602:   return (
+0603:     <div className="stack">
+
+==== TARGET BLOCK: pattern [expanded] at line 57 ====
+0007:   verticalAlign: 'middle',
+0008:   fontSize: 12,
+0009:   lineHeight: 1.1
+0010: };
+0011: 
+0012: const selectStyle = {
+0013:   width: '100%',
+0014:   boxSizing: 'border-box',
+0015:   padding: '3px 5px',
+0016:   fontSize: 12,
+0017:   border: '1px solid #cbd5e1',
+0018:   borderRadius: 4,
+0019:   background: '#fff'
+0020: };
+0021: 
+0022: const ratioStyle = {
+0023:   width: '60px',
+0024:   boxSizing: 'border-box',
+0025:   padding: '3px 4px',
+0026:   fontSize: 12,
+0027:   border: '1px solid #cbd5e1',
+0028:   borderRadius: 4,
+0029:   background: '#fff'
+0030: };
+0031: 
+0032: const gramsStyle = {
+0033:   width: '84px',
+0034:   boxSizing: 'border-box',
+0035:   padding: '3px 4px',
+0036:   fontSize: 12,
+0037:   border: '1px solid #cbd5e1',
+0038:   borderRadius: 4,
+0039:   background: '#fff'
+0040: };
+0041: 
+0042: const compactNotesStyle = {
+0043:   width: '120px',
+0044:   minWidth: '120px',
+0045:   maxWidth: '120px',
+0046:   height: '24px',
+0047:   resize: 'none',
+0048:   overflow: 'hidden',
+0049:   boxSizing: 'border-box',
+0050:   padding: '3px 5px',
+0051:   fontSize: 12,
+0052:   border: '1px solid #cbd5e1',
+0053:   borderRadius: 4,
+0054:   background: '#fff'
+0055: };
+0056: 
+0057: const expandedNotesStyle = {
+0058:   width: '240px',
+0059:   minWidth: '240px',
+0060:   maxWidth: '320px',
+0061:   minHeight: '60px',
+0062:   resize: 'both',
+0063:   overflow: 'auto',
+0064:   boxSizing: 'border-box',
+0065:   padding: '6px 8px',
+0066:   fontSize: 12,
+0067:   border: '1px solid #94a3b8',
+0068:   borderRadius: 4,
+0069:   background: '#fff'
+0070: };
+0071: 
+0072: const stackedFieldStyle = {
+0073:   display: 'grid',
+0074:   gap: 3,
+0075:   minWidth: 88
+0076: };
+0077: 
+0078: const compactButtonStyle = {
+0079:   width: 'auto',
+0080:   minWidth: 110,
+0081:   maxWidth: 180,
+0082:   padding: '6px 10px',
+0083:   fontSize: 12,
+0084:   lineHeight: 1.1,
+0085:   borderRadius: 8,
+0086:   border: '1px solid #0f172a',
+0087:   background: '#0f172a',
+0088:   color: '#ffffff',
+0089:   cursor: 'pointer',
+0090:   fontWeight: 700,
+0091:   display: 'inline-flex',
+0092:   alignItems: 'center',
+0093:   justifyContent: 'center',
+0094:   flex: '0 0 auto'
+0095: };
+0096: 
+0097: const ignoreButtonStyle = {
+0098:   ...compactButtonStyle,
+0099:   border: '1px solid #b45309',
+0100:   background: '#b45309',
+0101:   color: '#ffffff'
+0102: };
+0103: 
+0104: const approveButtonStyle = {
+0105:   whiteSpace: 'nowrap',
+0106:   padding: '5px 9px',
+0107:   fontSize: 12,
+
+==== TARGET BLOCK: pattern [history] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [<thead>] at line 646 ====
+0596:   };
+0597: 
+0598:   if (!orderedCases.length) {
+0599:     return <div className="card"><p>No items currently need review.</p></div>;
+0600:   }
+0601: 
+0602:   return (
+0603:     <div className="stack">
+0604:       {currentStatus === 'pending' ? (
+0605:         <div className="card" style={{ padding: 8 }}>
+0606:           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+0607:             <button onClick={() => bulkAction('confirm')} disabled={savingId === 'bulk'} style={compactButtonStyle}>
+0608:               {savingId === 'bulk' ? 'Working...' : 'Approve Selected'}
+0609:             </button>
+0610: 
+0611:             <button onClick={() => bulkAction('ignore')} disabled={savingId === 'bulk'} style={ignoreButtonStyle}>
+0612:               Ignore Selected
+0613:             </button>
+0614: 
+0615:             {bulkMessage ? (
+0616:               <div style={{ fontSize: 13, color: '#334155' }}>
+0617:                 {bulkMessage}
+0618:               </div>
+0619:             ) : null}
+0620:           </div>
+0621:         </div>
+0622:       ) : null}
+0623: 
+0624:       <div
+0625:         ref={scrollCardRef}
+0626:         className="card"
+0627:         style={{
+0628:           padding: 0,
+0629:           overflow: 'hidden',
+0630:           position: 'relative',
+0631:           width: '100%',
+0632:           maxWidth: '100%',
+0633:           boxSizing: 'border-box',
+0634:           paddingBottom: 20
+0635:         }}
+0636:       >
+0637:         <div
+0638:           ref={scrollAreaRef}
+0639:           style={{
+0640:             overflowX: 'auto',
+0641:             overflowY: 'hidden'
+0642:           }}
+0643:         >
+0644:           <div ref={tableHostRef}>
+0645:             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1270 }}>
+0646:               <thead>
+0647:                 <tr style={{ background: '#e2e8f0' }}>
+0648:                   <th style={cellStyle}>
+0649:                     {currentStatus === 'pending' ? (
+0650:                       <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} title="Select all visible" />
+0651:                     ) : null}
+0652:                   </th>
+0653:                   <th style={cellStyle}>Info</th>
+0654:                   <th style={{ ...cellStyle, minWidth: 92 }}>Date</th>
+0655:                   <th style={{ ...cellStyle, minWidth: 220, maxWidth: 260 }}>Item</th>
+0656:                   <th style={{ ...cellStyle, minWidth: 96 }}>ID</th>
+0657:                   <th style={{ ...cellStyle, minWidth: 84 }}>Type</th>
+0658:                   <th style={{ ...cellStyle, minWidth: 78 }}>Metal</th>
+0659:                   <th style={{ ...cellStyle, minWidth: 82 }}>Grams</th>
+0660:                   <th style={{ ...cellStyle, minWidth: 58 }}>Ratio</th>
+0661:                   <th style={{ ...cellStyle, width: 128, minWidth: 128 }}>Notes</th>
+0662:                   <th style={{ ...cellStyle, minWidth: 170 }}>Actions</th>
+0663:                 </tr>
+0664:               </thead>
+0665:               <tbody>
+0666:                 {orderedCases.map((item) => {
+0667:                   const draft = getDraft(item);
+0668:                   const type = String(draft.suggestion_type || '').toLowerCase();
+0669:                   const isSwitchLike = isSwitchLikeType(type);
+0670:                   const isSelected = !!selectedIds[item.id];
+0671:                   const noteExpanded = expandedNotesId === item.id;
+0672:                   const isEditing = currentStatus !== 'pending' && editingId === item.id;
+0673:                   const isReadOnlyView = currentStatus !== 'pending' && !isEditing;
+0674: 
+0675:                   return (
+0676:                     <tr key={item.id} style={{ background: isSelected ? '#f8fafc' : '#ffffff' }}>
+0677:                       <td style={cellStyle}>
+0678:                         {currentStatus === 'pending' ? (
+0679:                           <input
+0680:                             type="checkbox"
+0681:                             checked={isSelected}
+0682:                             onChange={() => toggleSelected(item.id)}
+0683:                           />
+0684:                         ) : null}
+0685:                       </td>
+0686: 
+0687:                       <td style={cellStyle}>
+0688:                         <button
+0689:                           type="button"
+0690:                           onClick={() => setInfoItem(item)}
+0691:                           title="Show transaction details"
+0692:                           style={{
+0693:                             padding: '2px 7px',
+0694:                             width: 'auto',
+0695:                             minWidth: 28,
+0696:                             maxWidth: 32,
+
+==== TARGET BLOCK: pattern [<tbody>] at line 665 ====
+0615:             {bulkMessage ? (
+0616:               <div style={{ fontSize: 13, color: '#334155' }}>
+0617:                 {bulkMessage}
+0618:               </div>
+0619:             ) : null}
+0620:           </div>
+0621:         </div>
+0622:       ) : null}
+0623: 
+0624:       <div
+0625:         ref={scrollCardRef}
+0626:         className="card"
+0627:         style={{
+0628:           padding: 0,
+0629:           overflow: 'hidden',
+0630:           position: 'relative',
+0631:           width: '100%',
+0632:           maxWidth: '100%',
+0633:           boxSizing: 'border-box',
+0634:           paddingBottom: 20
+0635:         }}
+0636:       >
+0637:         <div
+0638:           ref={scrollAreaRef}
+0639:           style={{
+0640:             overflowX: 'auto',
+0641:             overflowY: 'hidden'
+0642:           }}
+0643:         >
+0644:           <div ref={tableHostRef}>
+0645:             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1270 }}>
+0646:               <thead>
+0647:                 <tr style={{ background: '#e2e8f0' }}>
+0648:                   <th style={cellStyle}>
+0649:                     {currentStatus === 'pending' ? (
+0650:                       <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} title="Select all visible" />
+0651:                     ) : null}
+0652:                   </th>
+0653:                   <th style={cellStyle}>Info</th>
+0654:                   <th style={{ ...cellStyle, minWidth: 92 }}>Date</th>
+0655:                   <th style={{ ...cellStyle, minWidth: 220, maxWidth: 260 }}>Item</th>
+0656:                   <th style={{ ...cellStyle, minWidth: 96 }}>ID</th>
+0657:                   <th style={{ ...cellStyle, minWidth: 84 }}>Type</th>
+0658:                   <th style={{ ...cellStyle, minWidth: 78 }}>Metal</th>
+0659:                   <th style={{ ...cellStyle, minWidth: 82 }}>Grams</th>
+0660:                   <th style={{ ...cellStyle, minWidth: 58 }}>Ratio</th>
+0661:                   <th style={{ ...cellStyle, width: 128, minWidth: 128 }}>Notes</th>
+0662:                   <th style={{ ...cellStyle, minWidth: 170 }}>Actions</th>
+0663:                 </tr>
+0664:               </thead>
+0665:               <tbody>
+0666:                 {orderedCases.map((item) => {
+0667:                   const draft = getDraft(item);
+0668:                   const type = String(draft.suggestion_type || '').toLowerCase();
+0669:                   const isSwitchLike = isSwitchLikeType(type);
+0670:                   const isSelected = !!selectedIds[item.id];
+0671:                   const noteExpanded = expandedNotesId === item.id;
+0672:                   const isEditing = currentStatus !== 'pending' && editingId === item.id;
+0673:                   const isReadOnlyView = currentStatus !== 'pending' && !isEditing;
+0674: 
+0675:                   return (
+0676:                     <tr key={item.id} style={{ background: isSelected ? '#f8fafc' : '#ffffff' }}>
+0677:                       <td style={cellStyle}>
+0678:                         {currentStatus === 'pending' ? (
+0679:                           <input
+0680:                             type="checkbox"
+0681:                             checked={isSelected}
+0682:                             onChange={() => toggleSelected(item.id)}
+0683:                           />
+0684:                         ) : null}
+0685:                       </td>
+0686: 
+0687:                       <td style={cellStyle}>
+0688:                         <button
+0689:                           type="button"
+0690:                           onClick={() => setInfoItem(item)}
+0691:                           title="Show transaction details"
+0692:                           style={{
+0693:                             padding: '2px 7px',
+0694:                             width: 'auto',
+0695:                             minWidth: 28,
+0696:                             maxWidth: 32,
+0697:                             fontSize: 12,
+0698:                             borderRadius: 999,
+0699:                             border: '1px solid #94a3b8',
+0700:                             background: '#fff',
+0701:                             cursor: 'pointer',
+0702:                             display: 'inline-flex',
+0703:                             alignItems: 'center',
+0704:                             justifyContent: 'center',
+0705:                             flex: '0 0 auto',
+0706:                             color: '#0f172a',
+0707:                             fontFamily: 'Arial, sans-serif',
+0708:                             textAlign: 'center',
+0709:                             textTransform: 'none'
+0710:                           }}
+0711:                         >
+0712:                           i
+0713:                         </button>
+0714:                       </td>
+0715: 
+
+==== TARGET BLOCK: pattern [display_transaction_code] at line 734 ====
+0684:                         ) : null}
+0685:                       </td>
+0686: 
+0687:                       <td style={cellStyle}>
+0688:                         <button
+0689:                           type="button"
+0690:                           onClick={() => setInfoItem(item)}
+0691:                           title="Show transaction details"
+0692:                           style={{
+0693:                             padding: '2px 7px',
+0694:                             width: 'auto',
+0695:                             minWidth: 28,
+0696:                             maxWidth: 32,
+0697:                             fontSize: 12,
+0698:                             borderRadius: 999,
+0699:                             border: '1px solid #94a3b8',
+0700:                             background: '#fff',
+0701:                             cursor: 'pointer',
+0702:                             display: 'inline-flex',
+0703:                             alignItems: 'center',
+0704:                             justifyContent: 'center',
+0705:                             flex: '0 0 auto',
+0706:                             color: '#0f172a',
+0707:                             fontFamily: 'Arial, sans-serif',
+0708:                             textAlign: 'center',
+0709:                             textTransform: 'none'
+0710:                           }}
+0711:                         >
+0712:                           i
+0713:                         </button>
+0714:                       </td>
+0715: 
+0716:                       <td style={cellStyle}>{item.raw_date || '-'}</td>
+0717: 
+0718:                       <td style={{ ...cellStyle, minWidth: 220, maxWidth: 260 }}>
+0719:                         <div
+0720:                           title={item.raw_definition || '-'}
+0721:                           style={{
+0722:                             whiteSpace: 'nowrap',
+0723:                             lineHeight: 1.2,
+0724:                             maxWidth: 260,
+0725:                             overflow: 'hidden',
+0726:                             textOverflow: 'ellipsis'
+0727:                           }}
+0728:                         >
+0729:                           {item.raw_definition || '-'}
+0730:                         </div>
+0731:                       </td>
+0732: 
+0733:                       <td style={{ ...cellStyle, minWidth: 96, fontFamily: 'monospace' }}>
+0734:                         {item.display_transaction_code || '-'}
+0735:                       </td>
+0736: 
+0737:                       <td style={cellStyle}>
+0738:                         <select
+0739:                           value={draft.suggestion_type}
+0740:                           onChange={(e) => updateDraft(item, 'suggestion_type', e.target.value)}
+0741:                           disabled={isReadOnlyView}
+0742:                           style={selectStyle}
+0743:                         >
+0744:                           <option value="purchase">Purchase</option>
+0745:                           <option value="transfer_in">Transfer In</option>
+0746:                           <option value="transfer_out">Transfer Out</option>
+0747:                           <option value="sale">Sale</option>
+0748:                           <option value="depot_fee">Depot Fee</option>
+0749:                           <option value="switch_pilot">Switch Pilot</option>
+0750:                           <option value="manual_switch">Manual Switch</option>
+0751:                           <option value="unknown">Unknown</option>
+0752:                           <option value="ignored">Ignored</option>
+0753:                         </select>
+0754:                       </td>
+0755: 
+0756:                       <td style={cellStyle}>
+0757:                         {isSwitchLike ? (
+0758:                           <div style={stackedFieldStyle}>
+0759:                             <select
+0760:                               value={draft.from_metal}
+0761:                               onChange={(e) => updateDraft(item, 'from_metal', e.target.value)}
+0762:                               disabled={isReadOnlyView}
+0763:                               style={selectStyle}
+0764:                             >
+0765:                               <option value="">From</option>
+0766:                               <option value="gold">Gold</option>
+0767:                               <option value="silver">Silver</option>
+0768:                             </select>
+0769:                             <select
+0770:                               value={draft.to_metal}
+0771:                               onChange={(e) => updateDraft(item, 'to_metal', e.target.value)}
+0772:                               disabled={isReadOnlyView}
+0773:                               style={selectStyle}
+0774:                             >
+0775:                               <option value="">To</option>
+0776:                               <option value="gold">Gold</option>
+0777:                               <option value="silver">Silver</option>
+0778:                             </select>
+0779:                           </div>
+0780:                         ) : (
+0781:                           <select
+0782:                             value={draft.metal}
+0783:                             onChange={(e) => updateDraft(item, 'metal', e.target.value)}
+0784:                             disabled={isReadOnlyView}
+
+==== TARGET BLOCK: pattern [transaction_code] at line 734 ====
+0684:                         ) : null}
+0685:                       </td>
+0686: 
+0687:                       <td style={cellStyle}>
+0688:                         <button
+0689:                           type="button"
+0690:                           onClick={() => setInfoItem(item)}
+0691:                           title="Show transaction details"
+0692:                           style={{
+0693:                             padding: '2px 7px',
+0694:                             width: 'auto',
+0695:                             minWidth: 28,
+0696:                             maxWidth: 32,
+0697:                             fontSize: 12,
+0698:                             borderRadius: 999,
+0699:                             border: '1px solid #94a3b8',
+0700:                             background: '#fff',
+0701:                             cursor: 'pointer',
+0702:                             display: 'inline-flex',
+0703:                             alignItems: 'center',
+0704:                             justifyContent: 'center',
+0705:                             flex: '0 0 auto',
+0706:                             color: '#0f172a',
+0707:                             fontFamily: 'Arial, sans-serif',
+0708:                             textAlign: 'center',
+0709:                             textTransform: 'none'
+0710:                           }}
+0711:                         >
+0712:                           i
+0713:                         </button>
+0714:                       </td>
+0715: 
+0716:                       <td style={cellStyle}>{item.raw_date || '-'}</td>
+0717: 
+0718:                       <td style={{ ...cellStyle, minWidth: 220, maxWidth: 260 }}>
+0719:                         <div
+0720:                           title={item.raw_definition || '-'}
+0721:                           style={{
+0722:                             whiteSpace: 'nowrap',
+0723:                             lineHeight: 1.2,
+0724:                             maxWidth: 260,
+0725:                             overflow: 'hidden',
+0726:                             textOverflow: 'ellipsis'
+0727:                           }}
+0728:                         >
+0729:                           {item.raw_definition || '-'}
+0730:                         </div>
+0731:                       </td>
+0732: 
+0733:                       <td style={{ ...cellStyle, minWidth: 96, fontFamily: 'monospace' }}>
+0734:                         {item.display_transaction_code || '-'}
+0735:                       </td>
+0736: 
+0737:                       <td style={cellStyle}>
+0738:                         <select
+0739:                           value={draft.suggestion_type}
+0740:                           onChange={(e) => updateDraft(item, 'suggestion_type', e.target.value)}
+0741:                           disabled={isReadOnlyView}
+0742:                           style={selectStyle}
+0743:                         >
+0744:                           <option value="purchase">Purchase</option>
+0745:                           <option value="transfer_in">Transfer In</option>
+0746:                           <option value="transfer_out">Transfer Out</option>
+0747:                           <option value="sale">Sale</option>
+0748:                           <option value="depot_fee">Depot Fee</option>
+0749:                           <option value="switch_pilot">Switch Pilot</option>
+0750:                           <option value="manual_switch">Manual Switch</option>
+0751:                           <option value="unknown">Unknown</option>
+0752:                           <option value="ignored">Ignored</option>
+0753:                         </select>
+0754:                       </td>
+0755: 
+0756:                       <td style={cellStyle}>
+0757:                         {isSwitchLike ? (
+0758:                           <div style={stackedFieldStyle}>
+0759:                             <select
+0760:                               value={draft.from_metal}
+0761:                               onChange={(e) => updateDraft(item, 'from_metal', e.target.value)}
+0762:                               disabled={isReadOnlyView}
+0763:                               style={selectStyle}
+0764:                             >
+0765:                               <option value="">From</option>
+0766:                               <option value="gold">Gold</option>
+0767:                               <option value="silver">Silver</option>
+0768:                             </select>
+0769:                             <select
+0770:                               value={draft.to_metal}
+0771:                               onChange={(e) => updateDraft(item, 'to_metal', e.target.value)}
+0772:                               disabled={isReadOnlyView}
+0773:                               style={selectStyle}
+0774:                             >
+0775:                               <option value="">To</option>
+0776:                               <option value="gold">Gold</option>
+0777:                               <option value="silver">Silver</option>
+0778:                             </select>
+0779:                           </div>
+0780:                         ) : (
+0781:                           <select
+0782:                             value={draft.metal}
+0783:                             onChange={(e) => updateDraft(item, 'metal', e.target.value)}
+0784:                             disabled={isReadOnlyView}
+
+==== TARGET BLOCK: pattern [ReconciliationTable] at line 278 ====
+0228: 
+0229:   if (type === 'switch') {
+0230:     return (!!item.from_metal && !!item.to_metal && item.quantity_grams != null && item.to_quantity_grams != null)
+0231:       || confidence >= 0.9;
+0232:   }
+0233: 
+0234:   if (type === 'manual_switch') {
+0235:     return (!!item.from_metal && !!item.to_metal && item.quantity_grams != null && item.to_quantity_grams != null)
+0236:       || confidence >= 0.95;
+0237:   }
+0238: 
+0239:   if (type === 'purchase' || type === 'transfer_in' || type === 'transfer_out' || type === 'sale' || type === 'depot_fee') {
+0240:     return (!!item.metal && item.quantity_grams != null)
+0241:       || confidence >= 0.9;
+0242:   }
+0243: 
+0244:   return confidence >= 0.9;
+0245: }
+0246: 
+0247: function sortCases(rows) {
+0248:   const priority = {
+0249:     purchase: 1,
+0250:     transfer_in: 2,
+0251:     transfer_out: 3,
+0252:     manual_switch: 4,
+0253:     switch_pilot: 5,
+0254:     switch: 6,
+0255:     sale: 7,
+0256:     depot_fee: 8,
+0257:     unknown: 9,
+0258:     ignored: 10
+0259:   };
+0260: 
+0261:   return [...rows].sort((a, b) => {
+0262:     const aSelected = isValidForAutoSelect(a) ? 0 : 1;
+0263:     const bSelected = isValidForAutoSelect(b) ? 0 : 1;
+0264:     if (aSelected !== bSelected) return aSelected - bSelected;
+0265: 
+0266:     const aPriority = priority[a.suggestion_type] ?? 99;
+0267:     const bPriority = priority[b.suggestion_type] ?? 99;
+0268:     if (aPriority !== bPriority) return aPriority - bPriority;
+0269: 
+0270:     const aDate = a.raw_date || '';
+0271:     const bDate = b.raw_date || '';
+0272:     if (aDate !== bDate) return aDate.localeCompare(bDate);
+0273: 
+0274:     return (a.row_index || 0) - (b.row_index || 0);
+0275:   });
+0276: }
+0277: 
+0278: export default function ReconciliationTable({ cases, refresh, currentStatus, onProcessed }) {
+0279:   const [savingId, setSavingId] = useState('');
+0280:   const [drafts, setDrafts] = useState({});
+0281:   const [selectedIds, setSelectedIds] = useState({});
+0282:   const [infoItem, setInfoItem] = useState(null);
+0283:   const [bulkMessage, setBulkMessage] = useState('');
+0284:   const [expandedNotesId, setExpandedNotesId] = useState('');
+0285:   const [editingId, setEditingId] = useState('');
+0286: 
+0287:   const scrollCardRef = useRef(null);
+0288:   const scrollAreaRef = useRef(null);
+0289:   const tableHostRef = useRef(null);
+0290:   const bottomScrollRef = useRef(null);
+0291:   const bottomInnerRef = useRef(null);
+0292: 
+0293:   const orderedCases = useMemo(() => {
+0294:     const visible = (cases || []).filter((item) => !isHiddenNoise(item));
+0295:     return sortCases(visible);
+0296:   }, [cases]);
+0297: 
+0298:   useEffect(() => {
+0299:     const nextSelected = {};
+0300:     orderedCases.forEach((item) => {
+0301:       if (currentStatus === 'pending' && isValidForAutoSelect(item)) {
+0302:         nextSelected[item.id] = true;
+0303:       }
+0304:     });
+0305:     setSelectedIds(nextSelected);
+0306:   }, [orderedCases, currentStatus]);
+0307: 
+0308:   useEffect(() => {
+0309:     const card = scrollCardRef.current;
+0310:     const area = scrollAreaRef.current;
+0311:     const host = tableHostRef.current;
+0312:     const bottom = bottomScrollRef.current;
+0313:     const inner = bottomInnerRef.current;
+0314:     if (!card || !area || !host || !bottom || !inner) return;
+0315: 
+0316:     let syncing = false;
+0317: 
+0318:     const syncWidth = () => {
+0319:       const hostWidth = host.scrollWidth || 0;
+0320:       const areaWidth = area.clientWidth || 0;
+0321:       const cardRect = card.getBoundingClientRect();
+0322: 
+0323:       inner.style.width = `${hostWidth}px`;
+0324: 
+0325:       const needsScroll = hostWidth > areaWidth + 2;
+0326:       bottom.style.display = needsScroll ? 'block' : 'none';
+0327: 
+0328:       if (!needsScroll) {
+
+==== TARGET BLOCK: pattern [const\s+ReconciliationTable] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [function\s+ReconciliationTable] at line 278 ====
+0228: 
+0229:   if (type === 'switch') {
+0230:     return (!!item.from_metal && !!item.to_metal && item.quantity_grams != null && item.to_quantity_grams != null)
+0231:       || confidence >= 0.9;
+0232:   }
+0233: 
+0234:   if (type === 'manual_switch') {
+0235:     return (!!item.from_metal && !!item.to_metal && item.quantity_grams != null && item.to_quantity_grams != null)
+0236:       || confidence >= 0.95;
+0237:   }
+0238: 
+0239:   if (type === 'purchase' || type === 'transfer_in' || type === 'transfer_out' || type === 'sale' || type === 'depot_fee') {
+0240:     return (!!item.metal && item.quantity_grams != null)
+0241:       || confidence >= 0.9;
+0242:   }
+0243: 
+0244:   return confidence >= 0.9;
+0245: }
+0246: 
+0247: function sortCases(rows) {
+0248:   const priority = {
+0249:     purchase: 1,
+0250:     transfer_in: 2,
+0251:     transfer_out: 3,
+0252:     manual_switch: 4,
+0253:     switch_pilot: 5,
+0254:     switch: 6,
+0255:     sale: 7,
+0256:     depot_fee: 8,
+0257:     unknown: 9,
+0258:     ignored: 10
+0259:   };
+0260: 
+0261:   return [...rows].sort((a, b) => {
+0262:     const aSelected = isValidForAutoSelect(a) ? 0 : 1;
+0263:     const bSelected = isValidForAutoSelect(b) ? 0 : 1;
+0264:     if (aSelected !== bSelected) return aSelected - bSelected;
+0265: 
+0266:     const aPriority = priority[a.suggestion_type] ?? 99;
+0267:     const bPriority = priority[b.suggestion_type] ?? 99;
+0268:     if (aPriority !== bPriority) return aPriority - bPriority;
+0269: 
+0270:     const aDate = a.raw_date || '';
+0271:     const bDate = b.raw_date || '';
+0272:     if (aDate !== bDate) return aDate.localeCompare(bDate);
+0273: 
+0274:     return (a.row_index || 0) - (b.row_index || 0);
+0275:   });
+0276: }
+0277: 
+0278: export default function ReconciliationTable({ cases, refresh, currentStatus, onProcessed }) {
+0279:   const [savingId, setSavingId] = useState('');
+0280:   const [drafts, setDrafts] = useState({});
+0281:   const [selectedIds, setSelectedIds] = useState({});
+0282:   const [infoItem, setInfoItem] = useState(null);
+0283:   const [bulkMessage, setBulkMessage] = useState('');
+0284:   const [expandedNotesId, setExpandedNotesId] = useState('');
+0285:   const [editingId, setEditingId] = useState('');
+0286: 
+0287:   const scrollCardRef = useRef(null);
+0288:   const scrollAreaRef = useRef(null);
+0289:   const tableHostRef = useRef(null);
+0290:   const bottomScrollRef = useRef(null);
+0291:   const bottomInnerRef = useRef(null);
+0292: 
+0293:   const orderedCases = useMemo(() => {
+0294:     const visible = (cases || []).filter((item) => !isHiddenNoise(item));
+0295:     return sortCases(visible);
+0296:   }, [cases]);
+0297: 
+0298:   useEffect(() => {
+0299:     const nextSelected = {};
+0300:     orderedCases.forEach((item) => {
+0301:       if (currentStatus === 'pending' && isValidForAutoSelect(item)) {
+0302:         nextSelected[item.id] = true;
+0303:       }
+0304:     });
+0305:     setSelectedIds(nextSelected);
+0306:   }, [orderedCases, currentStatus]);
+0307: 
+0308:   useEffect(() => {
+0309:     const card = scrollCardRef.current;
+0310:     const area = scrollAreaRef.current;
+0311:     const host = tableHostRef.current;
+0312:     const bottom = bottomScrollRef.current;
+0313:     const inner = bottomInnerRef.current;
+0314:     if (!card || !area || !host || !bottom || !inner) return;
+0315: 
+0316:     let syncing = false;
+0317: 
+0318:     const syncWidth = () => {
+0319:       const hostWidth = host.scrollWidth || 0;
+0320:       const areaWidth = area.clientWidth || 0;
+0321:       const cardRect = card.getBoundingClientRect();
+0322: 
+0323:       inner.style.width = `${hostWidth}px`;
+0324: 
+0325:       const needsScroll = hostWidth > areaWidth + 2;
+0326:       bottom.style.display = needsScroll ? 'block' : 'none';
+0327: 
+0328:       if (!needsScroll) {

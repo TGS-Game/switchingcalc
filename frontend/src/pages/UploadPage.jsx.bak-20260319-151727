@@ -1,0 +1,491 @@
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import client from '../api/client';
+import FileUploader from '../components/FileUploader';
+import ReconciliationPage from './ReconciliationPage';
+
+function formatNumber(value, digits = 4) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return new Intl.NumberFormat('en-GB', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits
+  }).format(num);
+}
+
+function buildDisplayCode(lot) {
+  const originType = String(lot?.origin_type || '').toLowerCase();
+  const txId = String(lot?.origin_transaction_id || '');
+  const shortId = txId ? txId.replace(/-/g, '').slice(0, 6).toUpperCase() : '000000';
+
+  if (originType === 'purchase' && lot?.metal === 'gold') return `PG-${shortId}`;
+  if (originType === 'purchase' && lot?.metal === 'silver') return `PS-${shortId}`;
+  if (originType === 'switch' && lot?.metal === 'gold') return `SG-${shortId}`;
+  if (originType === 'switch' && lot?.metal === 'silver') return `GS-${shortId}`;
+  if (originType === 'transfer_in' && lot?.metal === 'gold') return `TG-${shortId}`;
+  if (originType === 'transfer_in' && lot?.metal === 'silver') return `TS-${shortId}`;
+
+  return `MT-${shortId}`;
+}
+
+function JourneyStep({ number, label, active, complete }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '6px 10px',
+        borderRadius: 999,
+        border: active ? '1px solid #0f172a' : '1px solid #cbd5e1',
+        background: active ? '#dbeafe' : complete ? '#ecfdf5' : '#ffffff',
+        color: '#111827',
+        fontSize: 12,
+        fontWeight: 700,
+        whiteSpace: 'nowrap'
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 20,
+          height: 20,
+          borderRadius: 999,
+          background: active ? '#0f172a' : complete ? '#166534' : '#e5e7eb',
+          color: active || complete ? '#ffffff' : '#111827',
+          fontSize: 11
+        }}
+      >
+        {number}
+      </span>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function SmallNavButton({ children, onClick, disabled = false }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        padding: '6px 10px',
+        fontSize: 12,
+        borderRadius: 8,
+        border: '1px solid #cbd5e1',
+        background: disabled ? '#f8fafc' : '#ffffff',
+        color: '#111827',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontWeight: 600
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function AllocationWorkbench({ kind }) {
+  const [data, setData] = useState({ items: [], available_holdings: [] });
+  const [loading, setLoading] = useState(true);
+  const [selectedTxId, setSelectedTxId] = useState('');
+  const [allocations, setAllocations] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const refresh = async () => {
+    setLoading(true);
+    setMessage('');
+    try {
+      const response = await client.get(`/reconciliation/pending-allocations?kind=${kind}`);
+      const nextData = response.data || { items: [], available_holdings: [] };
+      setData(nextData);
+
+      if (!selectedTxId && nextData.items?.length) {
+        setSelectedTxId(nextData.items[0].transaction_id);
+      } else if (selectedTxId && !(nextData.items || []).some((x) => x.transaction_id === selectedTxId)) {
+        setSelectedTxId(nextData.items?.[0]?.transaction_id || '');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, [kind]);
+
+  const selectedItem = useMemo(() => {
+    return (data.items || []).find((x) => x.transaction_id === selectedTxId) || null;
+  }, [data, selectedTxId]);
+
+  const availableHoldings = useMemo(() => {
+    if (!selectedItem) return [];
+    const sourceMetal = String(selectedItem.source_metal || '').toLowerCase();
+    if (!sourceMetal) return data.available_holdings || [];
+    return (data.available_holdings || []).filter((x) => String(x.metal || '').toLowerCase() === sourceMetal);
+  }, [data, selectedItem]);
+
+  const required = useMemo(() => {
+    const value = Number(selectedItem?.required_source_quantity_grams);
+    return Number.isFinite(value) ? value : null;
+  }, [selectedItem]);
+
+  const totalAllocated = useMemo(() => {
+    return Object.values(allocations).reduce((sum, row) => {
+      const n = Number(row?.grams);
+      return sum + (Number.isFinite(n) ? n : 0);
+    }, 0);
+  }, [allocations]);
+
+  const remaining = useMemo(() => {
+    if (required == null) return null;
+    return required - totalAllocated;
+  }, [required, totalAllocated]);
+
+  const updateGrams = (lot, gramsValue) => {
+    const available = Number(lot.quantity_grams) || 0;
+    const requested = Math.max(0, Number(gramsValue) || 0);
+
+    const currentForThisLot = Number(allocations[lot.lot_key]?.grams) || 0;
+    const allocatedExcludingThisLot = totalAllocated - currentForThisLot;
+
+    let maxAllowed = available;
+    if (required != null) {
+      maxAllowed = Math.min(available, Math.max(0, required - allocatedExcludingThisLot));
+    }
+
+    const grams = Math.max(0, Math.min(requested, maxAllowed));
+    const percent = available > 0 ? (grams / available) * 100 : 0;
+
+    setAllocations((prev) => ({
+      ...prev,
+      [lot.lot_key]: {
+        grams,
+        percent
+      }
+    }));
+  };
+
+  const updatePercent = (lot, percentValue) => {
+    const available = Number(lot.quantity_grams) || 0;
+    const requestedPercent = Math.max(0, Math.min(Number(percentValue) || 0, 100));
+    const requestedGrams = available * (requestedPercent / 100);
+
+    const currentForThisLot = Number(allocations[lot.lot_key]?.grams) || 0;
+    const allocatedExcludingThisLot = totalAllocated - currentForThisLot;
+
+    let maxAllowed = available;
+    if (required != null) {
+      maxAllowed = Math.min(available, Math.max(0, required - allocatedExcludingThisLot));
+    }
+
+    const grams = Math.max(0, Math.min(requestedGrams, maxAllowed));
+    const percent = available > 0 ? (grams / available) * 100 : 0;
+
+    setAllocations((prev) => ({
+      ...prev,
+      [lot.lot_key]: {
+        grams,
+        percent
+      }
+    }));
+  };
+
+  const resetAllocations = () => {
+    setAllocations({});
+    setMessage('');
+  };
+
+  const saveAllocations = async () => {
+    if (!selectedItem?.transaction_id) return;
+
+    const payload = {
+      allocations: availableHoldings
+        .map((lot) => ({
+          lot_key: lot.lot_key,
+          allocated_quantity_grams: allocations[lot.lot_key]?.grams || 0
+        }))
+        .filter((x) => Number(x.allocated_quantity_grams) > 0)
+    };
+
+    if (!payload.allocations.length) {
+      window.alert('Please allocate at least one holding.');
+      return;
+    }
+
+    setSaving(true);
+    setMessage('');
+    try {
+      const response = await client.post(`/reconciliation/cases/${selectedItem.transaction_id}/resolve-allocations`, payload);
+      setMessage(`Saved and approved. Total allocated: ${formatNumber(response.data?.total_allocated_grams, 6)} g.`);
+      setAllocations({});
+      await refresh();
+    } catch (error) {
+      const apiMessage = error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Failed to save allocations';
+      window.alert(apiMessage);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="card"><p>Loading {kind} allocations...</p></div>;
+  }
+
+  if (!(data.items || []).length) {
+    return (
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>{kind === 'switch' ? 'Pending Switches' : 'Pending Sales'}</h3>
+        <p style={{ marginBottom: 0 }}>No pending {kind} allocations right now.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack">
+      <div className="card" style={{ padding: 12 }}>
+        <h3 style={{ marginTop: 0, marginBottom: 10 }}>{kind === 'switch' ? 'Pending Switches' : 'Pending Sales'}</h3>
+
+        <div style={{ display: 'grid', gap: 10 }}>
+          {(data.items || []).map((item) => {
+            const isSelected = selectedTxId === item.transaction_id;
+            return (
+              <div
+                key={item.transaction_id}
+                style={{
+                  border: isSelected ? '2px solid #0f172a' : '1px solid #cbd5e1',
+                  borderRadius: 10,
+                  background: isSelected ? '#eff6ff' : '#fff'
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTxId(item.transaction_id);
+                    setAllocations({});
+                    setMessage('');
+                  }}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: 12,
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div><strong>{item.transaction_type === 'sale' ? 'Sale' : 'Switch'}</strong> — {item.raw_date || item.transaction_date || '-'}</div>
+                  <div style={{ fontSize: 13, color: '#475569', marginTop: 4 }}>{item.raw_definition || item.notes || '-'}</div>
+                  <div style={{ fontSize: 12, marginTop: 6 }}>
+                    Required source grams: {item.required_source_quantity_grams != null ? formatNumber(item.required_source_quantity_grams, 6) : 'Set by allocation'}
+                    {' '}| Output grams: {item.output_quantity_grams != null ? formatNumber(item.output_quantity_grams, 6) : '-'}
+                  </div>
+                </button>
+
+                {isSelected ? (
+                  <div style={{ borderTop: '1px solid #dbeafe', padding: 12 }}>
+                    <div style={{ fontSize: 14, lineHeight: 1.7, marginBottom: 12 }}>
+                      <div><strong>Metal:</strong> {selectedItem?.source_metal ? `${selectedItem.source_metal.charAt(0).toUpperCase()}${selectedItem.source_metal.slice(1)}` : '-'}</div>
+                      <div><strong>Required source grams:</strong> {required != null ? formatNumber(required, 6) : 'Set by allocation'}</div>
+                      <div><strong>Allocated so far:</strong> {formatNumber(totalAllocated, 6)}</div>
+                      {remaining != null ? <div><strong>Remaining to allocate:</strong> {formatNumber(remaining, 6)}</div> : null}
+                    </div>
+
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+                        <thead>
+                          <tr style={{ background: '#e2e8f0' }}>
+                            <th style={{ textAlign: 'left', padding: 8 }}>Metal</th>
+                            <th style={{ textAlign: 'left', padding: 8 }}>Available Grams</th>
+                            <th style={{ textAlign: 'left', padding: 8 }}>Ratio</th>
+                            <th style={{ textAlign: 'left', padding: 8 }}>Code</th>
+                            <th style={{ textAlign: 'left', padding: 8 }}>Opened</th>
+                            <th style={{ textAlign: 'left', padding: 8 }}>Allocate Grams</th>
+                            <th style={{ textAlign: 'left', padding: 8 }}>Allocate %</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {availableHoldings.map((lot) => {
+                            const row = allocations[lot.lot_key] || { grams: 0, percent: 0 };
+                            return (
+                              <tr key={lot.lot_key}>
+                                <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>
+                                  {String(lot.metal || '').charAt(0).toUpperCase() + String(lot.metal || '').slice(1)}
+                                </td>
+                                <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>{formatNumber(lot.quantity_grams, 6)}</td>
+                                <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>{lot.basis_ratio != null ? formatNumber(lot.basis_ratio, 2) : '-'}</td>
+                                <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>{buildDisplayCode(lot)}</td>
+                                <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>{lot.opened_on || '-'}</td>
+                                <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>
+                                  <input
+                                    type="number"
+                                    step="0.000001"
+                                    value={row.grams}
+                                    onChange={(e) => updateGrams(lot, e.target.value)}
+                                    style={{ width: 110, padding: 6 }}
+                                  />
+                                </td>
+                                <td style={{ padding: 8, borderTop: '1px solid #e5e7eb' }}>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={row.percent}
+                                    onChange={(e) => updatePercent(lot, e.target.value)}
+                                    style={{ width: 90, padding: 6 }}
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                      <SmallNavButton onClick={saveAllocations} disabled={saving}>
+                        {saving ? 'Saving...' : 'Save & Approve'}
+                      </SmallNavButton>
+                      <SmallNavButton onClick={resetAllocations} disabled={saving}>
+                        Reset
+                      </SmallNavButton>
+                    </div>
+
+                    {message ? (
+                      <div style={{ marginTop: 10, color: '#166534', fontWeight: 600, fontSize: 13 }}>{message}</div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function UploadPage() {
+  const [uploadResult, setUploadResult] = useState(null);
+  const [reviewKey, setReviewKey] = useState(0);
+  const [step, setStep] = useState('upload');
+  const reviewRef = useRef(null);
+
+  const steps = ['upload', 'assign', 'switches', 'sales'];
+  const currentIndex = steps.indexOf(step);
+
+  useEffect(() => {
+    if (!uploadResult || uploadResult.error) return;
+    setStep('assign');
+
+    const timer = setTimeout(() => {
+      reviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [uploadResult]);
+
+  const handleUploaded = (result) => {
+    setUploadResult(result);
+    if (!result?.error) {
+      setReviewKey((prev) => prev + 1);
+    }
+  };
+
+  const goNext = () => {
+    const next = steps[Math.min(currentIndex + 1, steps.length - 1)];
+    setStep(next);
+  };
+
+  const goPrev = () => {
+    const prev = steps[Math.max(currentIndex - 1, 0)];
+    setStep(prev);
+  };
+
+  return (
+    <div className="stack">
+      <div className="card" style={{ padding: 12 }}>
+        <h2 style={{ marginTop: 0, marginBottom: 10 }}>Upload & Assign</h2>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <JourneyStep number="1" label="Upload" active={step === 'upload'} complete={!!uploadResult && !uploadResult.error} />
+          <span style={{ color: '#64748b', fontSize: 12 }}>→</span>
+          <JourneyStep number="2" label="Assign Category" active={step === 'assign'} complete={step === 'switches' || step === 'sales'} />
+          <span style={{ color: '#64748b', fontSize: 12 }}>→</span>
+          <JourneyStep number="3" label="Assign Switches" active={step === 'switches'} complete={step === 'sales'} />
+          <span style={{ color: '#64748b', fontSize: 12 }}>→</span>
+          <JourneyStep number="4" label="Assign Sales" active={step === 'sales'} complete={false} />
+        </div>
+      </div>
+
+      {step === 'upload' ? (
+        <>
+          <FileUploader onUploaded={handleUploaded} />
+
+          {uploadResult ? (
+            <div
+              className="card"
+              style={{
+                border: uploadResult.error ? '1px solid #dc2626' : '1px solid #16a34a',
+                background: uploadResult.error ? '#fef2f2' : '#f0fdf4'
+              }}
+            >
+              <h3 style={{ marginTop: 0, marginBottom: 10 }}>
+                {uploadResult.error ? 'Upload failed' : 'Upload complete'}
+              </h3>
+
+              <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+                <div><strong>File:</strong> {uploadResult.fileName || '-'}</div>
+                {!uploadResult.error ? (
+                  <>
+                    <div><strong>New rows processed:</strong> {uploadResult.newRowCount}</div>
+                    <div><strong>Duplicate rows skipped:</strong> {uploadResult.skippedDuplicateCount}</div>
+                    <div><strong>Rows ready to assign:</strong> {uploadResult.suggestionCount}</div>
+                  </>
+                ) : null}
+                <div style={{ marginTop: 8 }}>{uploadResult.message}</div>
+              </div>
+
+              {!uploadResult.error ? (
+                <div style={{ marginTop: 12 }}>
+                  <SmallNavButton onClick={() => setStep('assign')}>Next</SmallNavButton>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {step === 'assign' ? (
+        <div ref={reviewRef} className="stack">
+          <ReconciliationPage key={reviewKey} embedded />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <SmallNavButton onClick={goPrev}>Back</SmallNavButton>
+            <SmallNavButton onClick={goNext}>Next</SmallNavButton>
+          </div>
+        </div>
+      ) : null}
+
+      {step === 'switches' ? (
+        <div className="stack">
+          <AllocationWorkbench kind="switch" />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <SmallNavButton onClick={goPrev}>Back</SmallNavButton>
+            <SmallNavButton onClick={goNext}>Next</SmallNavButton>
+          </div>
+        </div>
+      ) : null}
+
+      {step === 'sales' ? (
+        <div className="stack">
+          <AllocationWorkbench kind="sale" />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <SmallNavButton onClick={goPrev}>Back</SmallNavButton>
+            <SmallNavButton onClick={() => window.location.href = '/transactions'}>Finish</SmallNavButton>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+

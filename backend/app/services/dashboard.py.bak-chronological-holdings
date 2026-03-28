@@ -1,0 +1,521 @@
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+from ..models.models import ReconciliationCase, SavedCalculationScenario, Transaction, TransactionType, SuggestedTransaction, RawStatementRow
+
+
+def _to_decimal(value, default="0"):
+    try:
+        if value is None:
+            return Decimal(default)
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(default)
+
+
+def _open_case_map(user_id):
+    rows = (
+        ReconciliationCase.query
+        .filter_by(user_id=user_id)
+        .all()
+    )
+    return {str(r.transaction_id): r for r in rows}
+
+
+def holdings_summary(user_id):
+    lots = build_current_lots(user_id)
+    gold = Decimal("0")
+    silver = Decimal("0")
+    switch_count = 0
+
+    txs = (
+        Transaction.query.filter_by(user_id=user_id, is_deleted=False)
+        .order_by(Transaction.transaction_date.asc(), Transaction.created_at.asc())
+        .all()
+    )
+    case_map = _open_case_map(user_id)
+
+    for tx in txs:
+        case = case_map.get(str(tx.id))
+        if tx.type == TransactionType.switch and (not case or case.status == "resolved"):
+            switch_count += 1
+
+    for lot in lots:
+        qty = _to_decimal(lot.get("quantity_grams"))
+        if lot.get("metal") == "gold":
+            gold += qty
+        elif lot.get("metal") == "silver":
+            silver += qty
+
+    fees = Decimal("0")
+    for tx in txs:
+        case = case_map.get(str(tx.id))
+        if case and case.status != "resolved" and tx.type in {TransactionType.switch, TransactionType.sale}:
+            continue
+        if tx.type in {TransactionType.depot_fee, TransactionType.storage_fee}:
+            fees += _to_decimal(tx.quantity_grams)
+
+    return {
+        "gold_grams": float(gold),
+        "silver_grams": float(silver),
+        "switch_count": switch_count,
+        "storage_fee_grams": float(fees),
+    }
+
+
+def _create_lot(lot_key, metal, quantity_grams, basis_ratio, tx, history=None, source_meta=None):
+    return {
+        "lot_key": lot_key,
+        "metal": metal,
+        "quantity_grams": _to_decimal(quantity_grams),
+        "basis_ratio": _to_decimal(basis_ratio) if basis_ratio is not None else None,
+        "origin_transaction_id": str(tx.id),
+        "origin_type": tx.type.value,
+        "opened_on": tx.transaction_date.isoformat(),
+        "source_meta": source_meta or {},
+        "history": history or [
+            {
+                "transaction_id": str(tx.id),
+                "type": tx.type.value,
+                "date": tx.transaction_date.isoformat(),
+                "ratio": float(tx.ratio) if tx.ratio is not None else None,
+                "quantity_grams": float(quantity_grams) if quantity_grams is not None else None,
+            }
+        ],
+    }
+
+
+
+def _transaction_source_meta(tx):
+    if not tx or not tx.source_suggestion_id:
+        return {}
+
+    suggestion = SuggestedTransaction.query.filter_by(id=tx.source_suggestion_id).first()
+    if not suggestion or not suggestion.source_row_id:
+        return {}
+
+    row = RawStatementRow.query.filter_by(id=suggestion.source_row_id).first()
+    if not row:
+        return {}
+
+    payload = row.raw_payload or {}
+    return {
+        "row_index": row.row_index,
+        "raw_date": payload.get("Date"),
+        "raw_definition": payload.get("Definition"),
+        "raw_amount_eur": payload.get("Amount (EUR)") or payload.get("Amount"),
+        "raw_gold_silver_ratio": payload.get("Gold-Silver-Ratio") or payload.get("Gold Silver Ratio"),
+        "source_row_id": str(row.id),
+        "suggestion_id": str(suggestion.id),
+    }
+
+
+def build_current_lots(user_id):
+    txs = (
+        Transaction.query.filter_by(user_id=user_id, is_deleted=False)
+        .order_by(Transaction.transaction_date.asc(), Transaction.created_at.asc())
+        .all()
+    )
+
+    case_map = _open_case_map(user_id)
+    open_lots = []
+
+    def prune():
+        nonlocal open_lots
+        open_lots = [lot for lot in open_lots if lot["quantity_grams"] > 0]
+
+    def consume_fifo(metal, amount, tx=None, history_type=None):
+        remaining = _to_decimal(amount)
+        consumed = []
+
+        for lot in open_lots:
+            if remaining <= 0:
+                break
+            if lot["metal"] != metal:
+                continue
+            if lot["quantity_grams"] <= 0:
+                continue
+
+            alloc = min(lot["quantity_grams"], remaining)
+            if alloc > 0:
+                if tx and history_type:
+                    lot["history"] = list(lot["history"]) + [
+                        {
+                            "transaction_id": str(tx.id),
+                            "type": history_type,
+                            "date": tx.transaction_date.isoformat(),
+                            "ratio": float(tx.ratio) if tx.ratio is not None else None,
+                            "quantity_grams": float(alloc),
+                            "metal": metal,
+                        }
+                    ]
+                lot["quantity_grams"] -= alloc
+                remaining -= alloc
+                consumed.append((lot, alloc))
+
+        prune()
+        return consumed, remaining
+
+    def apply_pro_rata_fee(metal, amount, tx=None, history_type="depot_fee"):
+        fee_amount = _to_decimal(amount)
+        if fee_amount <= 0:
+            return Decimal("0")
+
+        matching = [lot for lot in open_lots if lot["metal"] == metal and lot["quantity_grams"] > 0]
+        total_open = sum((lot["quantity_grams"] for lot in matching), Decimal("0"))
+
+        if total_open <= 0:
+            return Decimal("0")
+
+        remaining = fee_amount
+        applied_total = Decimal("0")
+
+        for idx, lot in enumerate(matching):
+            if remaining <= 0:
+                break
+
+            if idx == len(matching) - 1:
+                alloc = min(lot["quantity_grams"], remaining)
+            else:
+                raw_alloc = (fee_amount * lot["quantity_grams"] / total_open)
+                alloc = min(lot["quantity_grams"], raw_alloc.quantize(Decimal("0.000001")))
+
+            if alloc <= 0:
+                continue
+
+            if tx and history_type:
+                lot["history"] = list(lot["history"]) + [
+                    {
+                        "transaction_id": str(tx.id),
+                        "type": history_type,
+                        "date": tx.transaction_date.isoformat(),
+                        "ratio": float(tx.ratio) if tx.ratio is not None else None,
+                        "quantity_grams": float(alloc),
+                        "metal": metal,
+                    }
+                ]
+
+            lot["quantity_grams"] -= alloc
+            remaining -= alloc
+            applied_total += alloc
+
+        prune()
+        return applied_total
+
+    def consume_by_allocations(allocations, tx=None, history_type=None):
+        consumed = []
+        for alloc in allocations or []:
+            lot_key = alloc.get("lot_key")
+            qty = _to_decimal(alloc.get("allocated_quantity_grams"))
+            if not lot_key or qty <= 0:
+                continue
+
+            lot = next((x for x in open_lots if x["lot_key"] == lot_key), None)
+            if not lot or lot["quantity_grams"] <= 0:
+                continue
+
+            actual = min(lot["quantity_grams"], qty)
+            if actual > 0:
+                if tx and history_type:
+                    lot["history"] = list(lot["history"]) + [
+                        {
+                            "transaction_id": str(tx.id),
+                            "type": history_type,
+                            "date": tx.transaction_date.isoformat(),
+                            "ratio": float(tx.ratio) if tx.ratio is not None else None,
+                            "quantity_grams": float(actual),
+                            "metal": lot["metal"],
+                        }
+                    ]
+                lot["quantity_grams"] -= actual
+                consumed.append((lot, actual))
+
+        prune()
+        return consumed
+
+    for tx in txs:
+        case = case_map.get(str(tx.id))
+        qty = _to_decimal(tx.quantity_grams)
+        to_qty = _to_decimal(tx.to_quantity_grams)
+
+        if tx.type in {TransactionType.purchase, TransactionType.transfer_in} and tx.metal:
+            lot_key = f"{tx.id}:{tx.metal.value}:root"
+            open_lots.append(_create_lot(lot_key, tx.metal.value, qty, tx.ratio, tx, source_meta=_transaction_source_meta(tx)))
+
+        elif tx.type in {TransactionType.transfer_out} and tx.metal:
+            if case and case.status != "resolved":
+                continue
+
+            if case and case.resolved_allocations:
+                consume_by_allocations(case.resolved_allocations, tx=tx, history_type=tx.type.value)
+            else:
+                consume_fifo(tx.metal.value, qty, tx=tx, history_type=tx.type.value)
+
+        elif tx.type in {TransactionType.depot_fee, TransactionType.storage_fee} and tx.metal:
+            apply_pro_rata_fee(tx.metal.value, qty, tx=tx, history_type="depot_fee")
+
+        elif tx.type == TransactionType.sale:
+            if case and case.status != "resolved":
+                continue
+
+            if case and case.resolved_allocations:
+                consume_by_allocations(case.resolved_allocations, tx=tx, history_type="sale")
+            elif tx.metal:
+                consume_fifo(tx.metal.value, qty, tx=tx, history_type="sale")
+
+        elif tx.type == TransactionType.switch:
+            if case and case.status != "resolved":
+                continue
+
+            if case and case.resolved_allocations:
+                consumed = consume_by_allocations(case.resolved_allocations, tx=tx, history_type="switch_out")
+            elif tx.from_metal:
+                consumed, _ = consume_fifo(tx.from_metal.value, qty, tx=tx, history_type="switch_out")
+            else:
+                consumed = []
+
+            total_consumed = sum((alloc for _, alloc in consumed), Decimal("0"))
+            if total_consumed > 0 and to_qty > 0 and tx.to_metal:
+                for idx, (source_lot, alloc) in enumerate(consumed, start=1):
+                    proportion = alloc / total_consumed
+                    derived_qty = to_qty * proportion
+                    history = list(source_lot["history"]) + [
+                        {
+                            "transaction_id": str(tx.id),
+                            "type": tx.type.value,
+                            "date": tx.transaction_date.isoformat(),
+                            "ratio": float(tx.ratio) if tx.ratio is not None else None,
+                            "quantity_grams": float(derived_qty),
+                            "allocated_source_quantity_grams": float(alloc),
+                            "from_metal": tx.from_metal.value if tx.from_metal else None,
+                            "to_metal": tx.to_metal.value if tx.to_metal else None,
+                        }
+                    ]
+                    lot_key = f"{tx.id}:{tx.to_metal.value}:{idx}"
+                    open_lots.append(_create_lot(lot_key, tx.to_metal.value, derived_qty, tx.ratio, tx, history=history, source_meta=_transaction_source_meta(tx)))
+
+        elif tx.type == TransactionType.switch_in and tx.metal:
+            lot_key = f"{tx.id}:{tx.metal.value}:root"
+            open_lots.append(_create_lot(lot_key, tx.metal.value, qty, tx.ratio, tx, source_meta=_transaction_source_meta(tx)))
+
+    final_lots = [lot for lot in list(open_lots) if lot["quantity_grams"] > 0]
+
+    final_lots.sort(key=lambda lot: (
+        lot.get("opened_on") or "",
+        lot.get("origin_type") or "",
+        lot.get("lot_key") or "",
+    ))
+
+    counters = {
+        "PG": 0,
+        "PS": 0,
+        "TG": 0,
+        "TS": 0,
+        "SG": 0,
+        "GS": 0,
+        "MT": 0,
+    }
+
+    def code_prefix(lot):
+        origin_type = str(lot.get("origin_type") or "").lower()
+        metal = str(lot.get("metal") or "").lower()
+
+        if origin_type == "purchase" and metal == "gold":
+            return "PG"
+        if origin_type == "purchase" and metal == "silver":
+            return "PS"
+        if origin_type == "transfer_in" and metal == "gold":
+            return "TG"
+        if origin_type == "transfer_in" and metal == "silver":
+            return "TS"
+        if origin_type == "switch" and metal == "gold":
+            return "SG"
+        if origin_type == "switch" and metal == "silver":
+            return "GS"
+        return "MT"
+
+    for lot in final_lots:
+        prefix = code_prefix(lot)
+        counters[prefix] += 1
+        lot["display_code"] = f"{prefix}-{counters[prefix]:03d}"
+
+        lot["quantity_grams"] = float(lot["quantity_grams"])
+        if lot["basis_ratio"] is not None:
+            lot["basis_ratio"] = float(lot["basis_ratio"])
+
+    return final_lots
+
+
+def calculator(user_id, target_ratio):
+    return calculator_preview(user_id, target_ratio, fee_percent=3)
+
+
+def calculator_preview(user_id, future_ratio, fee_percent=3):
+    future_ratio = _to_decimal(future_ratio)
+    fee_percent = _to_decimal(fee_percent, "3")
+
+    if future_ratio <= 0:
+        return {"error": "future_ratio_must_be_positive"}
+
+    fee_multiplier = (Decimal("100") - fee_percent) / Decimal("100")
+    if fee_multiplier <= 0:
+        return {"error": "fee_percent_must_be_less_than_100"}
+
+    lots = build_current_lots(user_id)
+    previews = []
+    totals = {}
+
+    for lot in lots:
+      qty = _to_decimal(lot["quantity_grams"])
+      basis_ratio = _to_decimal(lot["basis_ratio"]) if lot["basis_ratio"] is not None else None
+      current_metal = lot["metal"]
+
+      if basis_ratio is None or basis_ratio <= 0:
+          previews.append({
+              "lot_key": lot["lot_key"],
+              "current_metal": current_metal,
+              "current_quantity_grams": float(qty),
+              "basis_ratio": None,
+              "future_ratio": float(future_ratio),
+              "fee_percent": float(fee_percent),
+              "can_calculate": False,
+              "message": "No basis ratio stored for this lot, so gain calculation is not available.",
+              "history": lot["history"],
+          })
+          continue
+
+      if current_metal == "silver":
+          baseline_qty = qty / fee_multiplier / basis_ratio
+          projected_qty = qty / future_ratio * fee_multiplier
+          compare_metal = "gold"
+          target_metal = "gold"
+      elif current_metal == "gold":
+          baseline_qty = qty / fee_multiplier * basis_ratio
+          projected_qty = qty * future_ratio * fee_multiplier
+          compare_metal = "silver"
+          target_metal = "silver"
+      else:
+          previews.append({
+              "lot_key": lot["lot_key"],
+              "current_metal": current_metal,
+              "current_quantity_grams": float(qty),
+              "basis_ratio": float(basis_ratio),
+              "future_ratio": float(future_ratio),
+              "fee_percent": float(fee_percent),
+              "can_calculate": False,
+              "message": "Unsupported current metal.",
+              "history": lot["history"],
+          })
+          continue
+
+      gain_pct = ((projected_qty - baseline_qty) / baseline_qty * Decimal("100")) if baseline_qty > 0 else Decimal("0")
+
+      entry = {
+          "lot_key": lot["lot_key"],
+          "current_metal": current_metal,
+          "target_metal": target_metal,
+          "compare_metal": compare_metal,
+          "current_quantity_grams": float(qty),
+          "basis_ratio": float(basis_ratio),
+          "future_ratio": float(future_ratio),
+          "fee_percent": float(fee_percent),
+          "baseline_quantity_compare_metal": float(baseline_qty),
+          "projected_quantity_compare_metal": float(projected_qty),
+          "gain_percent": float(round(gain_pct, 6)),
+          "can_calculate": True,
+          "history": lot["history"],
+      }
+      previews.append(entry)
+
+      group_key = f"{current_metal}->{target_metal}"
+      if group_key not in totals:
+          totals[group_key] = {
+              "current_metal": current_metal,
+              "target_metal": target_metal,
+              "compare_metal": compare_metal,
+              "current_quantity_grams_total": Decimal("0"),
+              "baseline_quantity_compare_metal_total": Decimal("0"),
+              "projected_quantity_compare_metal_total": Decimal("0"),
+          }
+
+      totals[group_key]["current_quantity_grams_total"] += qty
+      totals[group_key]["baseline_quantity_compare_metal_total"] += baseline_qty
+      totals[group_key]["projected_quantity_compare_metal_total"] += projected_qty
+
+    totals_out = []
+    for _, item in totals.items():
+      baseline_total = item["baseline_quantity_compare_metal_total"]
+      projected_total = item["projected_quantity_compare_metal_total"]
+      gain_pct = ((projected_total - baseline_total) / baseline_total * Decimal("100")) if baseline_total > 0 else Decimal("0")
+
+      totals_out.append({
+          "current_metal": item["current_metal"],
+          "target_metal": item["target_metal"],
+          "compare_metal": item["compare_metal"],
+          "current_quantity_grams_total": float(item["current_quantity_grams_total"]),
+          "baseline_quantity_compare_metal_total": float(baseline_total),
+          "projected_quantity_compare_metal_total": float(projected_total),
+          "gain_percent": float(round(gain_pct, 6)),
+      })
+
+    return {
+      "generated_at": datetime.utcnow().isoformat() + "Z",
+      "future_ratio": float(future_ratio),
+      "fee_percent": float(fee_percent),
+      "current_holdings_summary": holdings_summary(user_id),
+      "lots": previews,
+      "totals": totals_out,
+      "note": "Calculator uses only current confirmed holdings. Saved scenarios are snapshots and never override actual confirmed transactions.",
+    }
+
+
+def save_calculator_scenario(user_id, future_ratio, fee_percent=3, scenario_name=None, notes=None):
+    preview = calculator_preview(user_id, future_ratio, fee_percent)
+    if "error" in preview:
+        return preview
+
+    scenario = SavedCalculationScenario(
+        user_id=user_id,
+        scenario_name=scenario_name,
+        notes=notes,
+        future_ratio=_to_decimal(future_ratio),
+        fee_percent=_to_decimal(fee_percent, "3"),
+        snapshot_json=preview,
+    )
+    from .. import db
+    db.session.add(scenario)
+    db.session.commit()
+
+    return {
+        "id": str(scenario.id),
+        "scenario_name": scenario.scenario_name,
+        "notes": scenario.notes,
+        "future_ratio": float(scenario.future_ratio),
+        "fee_percent": float(scenario.fee_percent),
+        "created_at": scenario.created_at.isoformat() + "Z",
+        "snapshot_json": scenario.snapshot_json,
+    }
+
+
+def list_calculator_scenarios(user_id):
+    rows = (
+        SavedCalculationScenario.query
+        .filter_by(user_id=user_id, is_archived=False)
+        .order_by(SavedCalculationScenario.created_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": str(row.id),
+            "scenario_name": row.scenario_name,
+            "notes": row.notes,
+            "future_ratio": float(row.future_ratio),
+            "fee_percent": float(row.fee_percent),
+            "created_at": row.created_at.isoformat() + "Z",
+            "updated_at": row.updated_at.isoformat() + "Z" if row.updated_at else None,
+            "snapshot_json": row.snapshot_json,
+        }
+        for row in rows
+    ]
+

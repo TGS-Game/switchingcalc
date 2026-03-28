@@ -1,0 +1,11 @@
+﻿import FileUploader from '../components/FileUploader';
+
+export default function UploadPage() {
+  return (
+    <div className="stack">
+      <h2>Upload statement CSV</h2>
+      <p>Step 1 imports the CSV exactly as-is, classifies rows automatically, and sends them to the review screen. Only confirmed rows affect holdings.</p>
+      <FileUploader />
+    </div>
+  );
+}

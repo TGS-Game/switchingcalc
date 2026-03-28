@@ -1,0 +1,12 @@
+﻿Date,Definition,Amount (EUR),Gold-Silver-Ratio
+01.03.2026,Gold purchase 10 Gramm,-950.00,89.5
+01.03.2026,Bank transfer,-950.00,89.5
+02.03.2026,Silver purchase 500 Gramm,-420.00,88.9
+02.03.2026,Bank transfer,-420.00,88.9
+03.03.2026,Gold -10 Gramm,0,87.0
+03.03.2026,Silver 500 Gramm,0,87.0
+04.03.2026,ZA Something,0,86.5
+05.03.2026,Cancelled Switch,0,86.3
+06.03.2026,Depot fee Gold 0.050 Gramm,0,86.0
+07.03.2026,Silver -25 Gramm,0,85.0
+08.03.2026,Unknown text row,123.45,84.0

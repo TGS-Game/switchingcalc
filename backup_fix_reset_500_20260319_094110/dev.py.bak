@@ -1,0 +1,39 @@
+﻿from flask import Blueprint, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+
+from .. import db
+from ..models.models import (
+    Transaction,
+    SuggestedTransaction,
+    UploadBatch,
+    RawStatementRow,
+    PositionLot,
+    LotAllocation,
+    ReconciliationCase,
+)
+
+dev_bp = Blueprint("dev", __name__, url_prefix="/dev")
+
+
+@dev_bp.route("/reset-data", methods=["POST"])
+@jwt_required()
+def reset_data():
+    user_id = get_jwt_identity()
+
+    LotAllocation.query.filter_by(user_id=user_id).delete()
+    PositionLot.query.filter_by(user_id=user_id).delete()
+    ReconciliationCase.query.filter_by(user_id=user_id).delete()
+    Transaction.query.filter_by(user_id=user_id).delete()
+    SuggestedTransaction.query.filter_by(user_id=user_id).delete()
+
+    batches = UploadBatch.query.filter_by(user_id=user_id).all()
+    batch_ids = [b.id for b in batches]
+
+    if batch_ids:
+        RawStatementRow.query.filter(RawStatementRow.upload_batch_id.in_(batch_ids)).delete(synchronize_session=False)
+
+    UploadBatch.query.filter_by(user_id=user_id).delete()
+
+    db.session.commit()
+
+    return jsonify({"status": "ok"})

@@ -1,0 +1,911 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import client from '../api/client';
+
+const cellStyle = {
+  padding: '4px 5px',
+  borderBottom: '1px solid #d1d5db',
+  verticalAlign: 'middle',
+  fontSize: 12,
+  lineHeight: 1.1
+};
+
+const selectStyle = {
+  width: '100%',
+  boxSizing: 'border-box',
+  padding: '3px 5px',
+  fontSize: 12,
+  border: '1px solid #cbd5e1',
+  borderRadius: 4,
+  background: '#fff'
+};
+
+const ratioStyle = {
+  width: '60px',
+  boxSizing: 'border-box',
+  padding: '3px 4px',
+  fontSize: 12,
+  border: '1px solid #cbd5e1',
+  borderRadius: 4,
+  background: '#fff'
+};
+
+const gramsStyle = {
+  width: '84px',
+  boxSizing: 'border-box',
+  padding: '3px 4px',
+  fontSize: 12,
+  border: '1px solid #cbd5e1',
+  borderRadius: 4,
+  background: '#fff'
+};
+
+const compactNotesStyle = {
+  width: '120px',
+  minWidth: '120px',
+  maxWidth: '120px',
+  height: '24px',
+  resize: 'none',
+  overflow: 'hidden',
+  boxSizing: 'border-box',
+  padding: '3px 5px',
+  fontSize: 12,
+  border: '1px solid #cbd5e1',
+  borderRadius: 4,
+  background: '#fff'
+};
+
+const expandedNotesStyle = {
+  width: '240px',
+  minWidth: '240px',
+  maxWidth: '320px',
+  minHeight: '60px',
+  resize: 'both',
+  overflow: 'auto',
+  boxSizing: 'border-box',
+  padding: '6px 8px',
+  fontSize: 12,
+  border: '1px solid #94a3b8',
+  borderRadius: 4,
+  background: '#fff'
+};
+
+const stackedFieldStyle = {
+  display: 'grid',
+  gap: 3,
+  minWidth: 88
+};
+
+const compactButtonStyle = {
+  width: 'auto',
+  minWidth: 110,
+  maxWidth: 180,
+  padding: '6px 10px',
+  fontSize: 12,
+  lineHeight: 1.1,
+  borderRadius: 8,
+  border: '1px solid #0f172a',
+  background: '#0f172a',
+  color: '#ffffff',
+  cursor: 'pointer',
+  fontWeight: 700,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flex: '0 0 auto'
+};
+
+const ignoreButtonStyle = {
+  ...compactButtonStyle,
+  border: '1px solid #b45309',
+  background: '#b45309',
+  color: '#ffffff'
+};
+
+const approveButtonStyle = {
+  whiteSpace: 'nowrap',
+  padding: '5px 9px',
+  fontSize: 12,
+  width: 'auto',
+  minWidth: 78,
+  maxWidth: 96,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flex: '0 0 auto',
+  borderRadius: 8,
+  border: '1px solid #0f172a',
+  background: '#0f172a',
+  color: '#ffffff',
+  fontWeight: 700,
+  cursor: 'pointer'
+};
+
+const rowIgnoreButtonStyle = {
+  ...approveButtonStyle,
+  border: '1px solid #b45309',
+  background: '#b45309'
+};
+
+function titleType(value) {
+  const map = {
+    purchase: 'Purchase',
+    transfer_in: 'Transfer In',
+    transfer_out: 'Transfer Out',
+    depot_fee: 'Depot Fee',
+    switch: 'Switch',
+    switch_pilot: 'Switch Pilot',
+    manual_switch: 'Manual Switch',
+    sale: 'Sale',
+    unknown: 'Unknown',
+    ignored: 'Ignored'
+  };
+  return map[value] || value;
+}
+
+function titleMetal(value) {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+}
+
+function isSwitchLikeType(value) {
+  const type = String(value || '').toLowerCase();
+  return type === 'switch' || type === 'switch_pilot' || type === 'manual_switch';
+}
+
+function formatSuggestedLabel(item) {
+  const type = String(item?.suggestion_type || '').toLowerCase();
+  if (isSwitchLikeType(type)) {
+    const fromMetal = titleMetal(item?.from_metal);
+    const toMetal = titleMetal(item?.to_metal);
+    if (fromMetal !== '-' && toMetal !== '-') {
+      return `${fromMetal} to ${toMetal}`;
+    }
+    if (toMetal !== '-') {
+      return `To ${toMetal}`;
+    }
+  }
+  return titleType(item?.suggestion_type);
+}
+
+function formatNumber(value, digits = 4) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return new Intl.NumberFormat('en-GB', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits
+  }).format(num);
+}
+
+function getParsedGramsRows(infoItem) {
+  const type = String(infoItem?.suggestion_type || '').toLowerCase();
+  const rows = [];
+
+  if (type === 'purchase' || type === 'transfer_in' || type === 'transfer_out' || type === 'sale' || type === 'depot_fee') {
+    rows.push(['Parsed grams', infoItem?.quantity_grams != null ? formatNumber(infoItem.quantity_grams, 6) : '-']);
+    return rows;
+  }
+
+  if (isSwitchLikeType(type)) {
+    const fromMetal = titleMetal(infoItem?.from_metal);
+    const toMetal = titleMetal(infoItem?.to_metal);
+
+    if (infoItem?.quantity_grams != null) {
+      rows.push([
+        fromMetal !== '-' ? `Input grams (${fromMetal})` : 'Input grams',
+        formatNumber(infoItem.quantity_grams, 6)
+      ]);
+    }
+
+    if (infoItem?.to_quantity_grams != null) {
+      rows.push([
+        toMetal !== '-' ? `Output grams (${toMetal})` : 'Output grams',
+        formatNumber(infoItem.to_quantity_grams, 6)
+      ]);
+    }
+
+    if (!rows.length) {
+      rows.push(['Parsed grams', '-']);
+    }
+
+    return rows;
+  }
+
+  rows.push(['Parsed grams', infoItem?.quantity_grams != null ? formatNumber(infoItem.quantity_grams, 6) : '-']);
+  return rows;
+}
+
+function isHiddenNoise(item) {
+  const text = `${item.raw_definition || ''}`.toLowerCase().trim();
+  if (
+    text.startsWith('za') ||
+    text.startsWith('bank transfer') ||
+    text.startsWith('wire transfer') ||
+    text.startsWith('sepa') ||
+    text.startsWith('cash deposit') ||
+    text.startsWith('cash withdrawal') ||
+    text.startsWith('zahlung') ||
+    text.startsWith('ueberweisung')
+  ) return true;
+  if (String(item.suggestion_type || '').toLowerCase() === 'ignored') return true;
+  if (item.suggestion_type === 'depot_fee' && (item.quantity_grams == null || item.quantity_grams === 0)) return true;
+  return false;
+}
+
+function isValidForAutoSelect(item) {
+  if (!item) return false;
+
+  const type = String(item.suggestion_type || '').toLowerCase();
+  const confidence = Number(item.confidence);
+
+  if (type === 'unknown' || type === 'ignored') return false;
+  if (type === 'switch_pilot') return true;
+
+  if (type === 'switch') {
+    return (!!item.from_metal && !!item.to_metal && item.quantity_grams != null && item.to_quantity_grams != null)
+      || confidence >= 0.9;
+  }
+
+  if (type === 'manual_switch') {
+    return (!!item.from_metal && !!item.to_metal && item.quantity_grams != null && item.to_quantity_grams != null)
+      || confidence >= 0.95;
+  }
+
+  if (type === 'purchase' || type === 'transfer_in' || type === 'transfer_out' || type === 'sale' || type === 'depot_fee') {
+    return (!!item.metal && item.quantity_grams != null)
+      || confidence >= 0.9;
+  }
+
+  return confidence >= 0.9;
+}
+
+function sortCases(rows) {
+  const priority = {
+    purchase: 1,
+    transfer_in: 2,
+    transfer_out: 3,
+    manual_switch: 4,
+    switch_pilot: 5,
+    switch: 6,
+    sale: 7,
+    depot_fee: 8,
+    unknown: 9,
+    ignored: 10
+  };
+
+  return [...rows].sort((a, b) => {
+    const aSelected = isValidForAutoSelect(a) ? 0 : 1;
+    const bSelected = isValidForAutoSelect(b) ? 0 : 1;
+    if (aSelected !== bSelected) return aSelected - bSelected;
+
+    const aPriority = priority[a.suggestion_type] ?? 99;
+    const bPriority = priority[b.suggestion_type] ?? 99;
+    if (aPriority !== bPriority) return aPriority - bPriority;
+
+    const aDate = a.raw_date || '';
+    const bDate = b.raw_date || '';
+    if (aDate !== bDate) return aDate.localeCompare(bDate);
+
+    return (a.row_index || 0) - (b.row_index || 0);
+  });
+}
+
+export default function ReconciliationTable({ cases, refresh, currentStatus, onProcessed }) {
+  const [savingId, setSavingId] = useState('');
+  const [drafts, setDrafts] = useState({});
+  const [selectedIds, setSelectedIds] = useState({});
+  const [infoItem, setInfoItem] = useState(null);
+  const [bulkMessage, setBulkMessage] = useState('');
+  const [expandedNotesId, setExpandedNotesId] = useState('');
+
+  const scrollCardRef = useRef(null);
+  const scrollAreaRef = useRef(null);
+  const tableHostRef = useRef(null);
+  const bottomScrollRef = useRef(null);
+  const bottomInnerRef = useRef(null);
+  const activeScrollSourceRef = useRef('');
+
+  const orderedCases = useMemo(() => {
+    const visible = (cases || []).filter((item) => !isHiddenNoise(item));
+    return sortCases(visible);
+  }, [cases]);
+
+  useEffect(() => {
+    const nextSelected = {};
+    orderedCases.forEach((item) => {
+      if (isValidForAutoSelect(item)) {
+        nextSelected[item.id] = true;
+      }
+    });
+    setSelectedIds(nextSelected);
+  }, [orderedCases]);
+
+  useEffect(() => {
+    const card = scrollCardRef.current;
+    const area = scrollAreaRef.current;
+    const host = tableHostRef.current;
+    const bottom = bottomScrollRef.current;
+    const inner = bottomInnerRef.current;
+    if (!card || !area || !host || !bottom || !inner) return;
+
+    let syncing = false;
+
+    const syncWidth = () => {
+      const hostWidth = host.scrollWidth || 0;
+      const areaWidth = area.clientWidth || 0;
+      const cardRect = card.getBoundingClientRect();
+
+      inner.style.width = `${hostWidth}px`;
+
+      const needsScroll = hostWidth > areaWidth + 2;
+      bottom.style.display = needsScroll ? 'block' : 'none';
+
+      if (!needsScroll) {
+        return;
+      }
+
+      bottom.style.left = `${Math.round(cardRect.left)}px`;
+      bottom.style.width = `${Math.round(cardRect.width)}px`;
+      bottom.style.maxWidth = `${Math.round(cardRect.width)}px`;
+      bottom.scrollLeft = area.scrollLeft;
+    };
+
+    const onAreaScroll = () => {
+      if (syncing) return;
+      syncing = true;
+      bottom.scrollLeft = area.scrollLeft;
+      syncing = false;
+    };
+
+    const onBottomScroll = () => {
+      if (syncing) return;
+      syncing = true;
+      area.scrollLeft = bottom.scrollLeft;
+      syncing = false;
+    };
+
+    syncWidth();
+
+    area.addEventListener('scroll', onAreaScroll);
+    bottom.addEventListener('scroll', onBottomScroll);
+    window.addEventListener('resize', syncWidth);
+
+    const resizeObserver = new ResizeObserver(() => syncWidth());
+    resizeObserver.observe(card);
+    resizeObserver.observe(area);
+    resizeObserver.observe(host);
+
+    return () => {
+      area.removeEventListener('scroll', onAreaScroll);
+      bottom.removeEventListener('scroll', onBottomScroll);
+      window.removeEventListener('resize', syncWidth);
+      resizeObserver.disconnect();
+    };
+  }, [orderedCases, expandedNotesId]);
+
+  const getDraft = (item) => {
+    return drafts[item.id] || {
+      action: 'confirm',
+      suggestion_type: item.amended_type || item.suggestion_type || '',
+      metal: item.amended_metal || item.metal || '',
+      from_metal: item.amended_from_metal || item.from_metal || '',
+      to_metal: item.amended_to_metal || item.to_metal || '',
+      quantity_grams: item.amended_quantity_grams ?? item.quantity_grams ?? '',
+      to_quantity_grams: item.amended_to_quantity_grams ?? item.to_quantity_grams ?? '',
+      ratio: item.amended_ratio ?? item.ratio ?? '',
+      notes: item.amended_notes ?? ''
+    };
+  };
+
+  const updateDraft = (item, key, value) => {
+    const current = getDraft(item);
+    const next = {
+      ...current,
+      [key]: value
+    };
+
+    if (key === 'suggestion_type') {
+      if (!isSwitchLikeType(value)) {
+        next.from_metal = '';
+        next.to_metal = '';
+      }
+
+      if (value === 'manual_switch') {
+        next.metal = '';
+      }
+
+      if (value !== 'purchase' && value !== 'transfer_in' && value !== 'transfer_out' && value !== 'sale' && value !== 'depot_fee') {
+        if (!next.from_metal && item.from_metal) next.from_metal = item.from_metal;
+        if (!next.to_metal && item.to_metal) next.to_metal = item.to_metal;
+      }
+
+      if (value === 'purchase' || value === 'transfer_in' || value === 'transfer_out' || value === 'sale' || value === 'depot_fee') {
+        if (!next.metal && item.metal) next.metal = item.metal;
+      }
+    }
+
+    setDrafts((prev) => ({
+      ...prev,
+      [item.id]: next
+    }));
+  };
+
+  const removeProcessedLocally = (ids) => {
+    if (!ids?.length) return;
+
+    onProcessed?.(ids);
+
+    setSelectedIds((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => {
+        delete next[id];
+      });
+      return next;
+    });
+
+    setDrafts((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => {
+        delete next[id];
+      });
+      return next;
+    });
+
+    if (infoItem && ids.includes(infoItem.id)) {
+      setInfoItem(null);
+    }
+  };
+
+  const resolve = async (item, forcedAction = '') => {
+    setSavingId(item.id);
+    setBulkMessage('');
+    try {
+      const payload = {
+        ...getDraft(item),
+        ...(forcedAction ? { action: forcedAction } : {})
+      };
+
+      const response = await client.post(/reconciliation//resolve, payload);
+      const result = response.data;
+      const finalStatus = result?.review_status;
+
+      if (currentStatus === 'pending' && ['confirmed', 'amended', 'ignored', 'rejected'].includes(finalStatus)) {
+        removeProcessedLocally([item.id]);
+        return;
+      }
+
+      await refresh();
+    } finally {
+      setSavingId('');
+    }
+  };
+
+  const toggleSelected = (id) => {
+    setSelectedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const allVisibleSelected = useMemo(() => {
+    if (!orderedCases.length) return false;
+    return orderedCases.every((item) => !!selectedIds[item.id]);
+  }, [orderedCases, selectedIds]);
+
+  const toggleSelectAll = () => {
+    const next = {};
+    if (!allVisibleSelected) {
+      orderedCases.forEach((item) => {
+        next[item.id] = true;
+      });
+    }
+    setSelectedIds(next);
+  };
+
+  const bulkAction = async (action) => {
+    const selectedItems = orderedCases.filter((item) => selectedIds[item.id]);
+    if (!selectedItems.length) {
+      window.alert('No visible rows are selected.');
+      return;
+    }
+
+    setBulkMessage('');
+
+    const payload = {
+      items: selectedItems.map((item) => {
+        const draft = getDraft(item);
+        return {
+          suggestion_id: item.id,
+          action,
+          suggestion_type: draft.suggestion_type,
+          metal: draft.metal,
+          from_metal: draft.from_metal,
+          to_metal: draft.to_metal,
+          quantity_grams: draft.quantity_grams,
+          to_quantity_grams: draft.to_quantity_grams,
+          ratio: draft.ratio,
+          notes: draft.notes,
+        };
+      })
+    };
+
+    setSavingId('bulk');
+    try {
+      const response = await client.post('/reconciliation/bulk-resolve', payload);
+      const results = response.data?.results || [];
+      const errors = response.data?.errors || [];
+
+      const processedIds = results
+        .filter((x) => ['confirmed', 'amended', 'ignored', 'rejected'].includes(x.review_status))
+        .map((x) => x.id);
+
+      if (processedIds.length) {
+        removeProcessedLocally(processedIds);
+      }
+
+      if (errors.length) {
+        setBulkMessage(`${results.length} row(s) processed. ${errors.length} row(s) need attention before they can be completed.`);
+      } else if (results.length) {
+        setBulkMessage(`${results.length} row(s) processed successfully.`);
+      }
+
+      if (currentStatus !== 'pending') {
+        await refresh();
+      }
+    } finally {
+      setSavingId('');
+    }
+  };
+
+  if (!orderedCases.length) {
+    return <div className="card"><p>No items currently need review.</p></div>;
+  }
+
+  return (
+    <div className="stack">
+      <div className="card" style={{ padding: 8 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => bulkAction('confirm')} disabled={savingId === 'bulk'} style={compactButtonStyle}>
+            {savingId === 'bulk' ? 'Working...' : 'Approve Selected'}
+          </button>
+
+          <button onClick={() => bulkAction('ignore')} disabled={savingId === 'bulk'} style={ignoreButtonStyle}>
+            Ignore Selected
+          </button>
+
+          {bulkMessage ? (
+            <div style={{ fontSize: 13, color: '#334155' }}>
+              {bulkMessage}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div ref={scrollCardRef} className="card" style={{
+          padding: 0,
+          overflow: 'hidden',
+          position: 'relative',
+          width: '100%',
+          maxWidth: '100%',
+          boxSizing: 'border-box',
+          paddingBottom: 20
+        }}
+      >
+        <div
+          ref={scrollAreaRef}
+          style={{
+            overflowX: 'auto',
+            overflowY: 'hidden'
+          }}
+        >
+          <div ref={tableHostRef}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1180 }}>
+              <thead>
+                <tr style={{ background: '#e2e8f0' }}>
+                  <th style={cellStyle}>
+                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} title="Select all visible" />
+                  </th>
+                  <th style={cellStyle}>Info</th>
+                  <th style={{ ...cellStyle, minWidth: 92 }}>Date</th>
+                  <th style={{ ...cellStyle, minWidth: 220, maxWidth: 260 }}>Item</th>
+                  <th style={{ ...cellStyle, minWidth: 84 }}>Type</th>
+                  <th style={{ ...cellStyle, minWidth: 78 }}>Metal</th>
+                  <th style={{ ...cellStyle, minWidth: 82 }}>Grams</th>
+                  <th style={{ ...cellStyle, minWidth: 58 }}>Ratio</th>
+                  <th style={{ ...cellStyle, width: 128, minWidth: 128 }}>Notes</th>
+                  <th style={{ ...cellStyle, minWidth: 170 }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orderedCases.map((item) => {
+                  const draft = getDraft(item);
+                  const type = String(draft.suggestion_type || '').toLowerCase();
+                  const isSwitchLike = isSwitchLikeType(type);
+                  const isSelected = !!selectedIds[item.id];
+                  const noteExpanded = expandedNotesId === item.id;
+
+                  return (
+                    <tr key={item.id} style={{ background: isSelected ? '#f8fafc' : '#ffffff' }}>
+                      <td style={cellStyle}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelected(item.id)}
+                        />
+                      </td>
+
+                      <td style={cellStyle}>
+                        <button
+                          type="button"
+                          onClick={() => setInfoItem(item)}
+                          title="Show transaction details"
+                          style={{
+                            padding: '2px 7px',
+                            width: 'auto',
+                            minWidth: 28,
+                            maxWidth: 32,
+                            fontSize: 12,
+                            borderRadius: 999,
+                            border: '1px solid #94a3b8',
+                            background: '#fff',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flex: '0 0 auto',
+                            color: '#0f172a',
+                            fontFamily: 'Arial, sans-serif',
+                            textAlign: 'center',
+                            textTransform: 'none'
+                          }}
+                        >
+                          i
+                        </button>
+                      </td>
+
+                      <td style={cellStyle}>{item.raw_date || '-'}</td>
+
+                      <td style={{ ...cellStyle, minWidth: 220, maxWidth: 260 }}>
+                        <div
+                          title={item.raw_definition || '-'}
+                          style={{
+                            whiteSpace: 'nowrap',
+                            lineHeight: 1.2,
+                            maxWidth: 260,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis'
+                          }}
+                        >
+                          {item.raw_definition || '-'}
+                        </div>
+                      </td>
+
+                      <td style={cellStyle}>
+                        <select
+                          value={draft.suggestion_type}
+                          onChange={(e) => updateDraft(item, 'suggestion_type', e.target.value)}
+                          style={selectStyle}
+                        >
+                          <option value="purchase">Purchase</option>
+                          <option value="transfer_in">Transfer In</option>
+                          <option value="transfer_out">Transfer Out</option>
+                          <option value="sale">Sale</option>
+                          <option value="depot_fee">Depot Fee</option>
+                          <option value="switch_pilot">Switch Pilot</option>
+                          <option value="manual_switch">Manual Switch</option>
+                          <option value="unknown">Unknown</option>
+                          <option value="ignored">Ignored</option>
+                        </select>
+                      </td>
+
+                      <td style={cellStyle}>
+                        {isSwitchLike ? (
+                          <div style={stackedFieldStyle}>
+                            <select
+                              value={draft.from_metal}
+                              onChange={(e) => updateDraft(item, 'from_metal', e.target.value)}
+                              style={selectStyle}
+                            >
+                              <option value="">From</option>
+                              <option value="gold">Gold</option>
+                              <option value="silver">Silver</option>
+                            </select>
+                            <select
+                              value={draft.to_metal}
+                              onChange={(e) => updateDraft(item, 'to_metal', e.target.value)}
+                              style={selectStyle}
+                            >
+                              <option value="">To</option>
+                              <option value="gold">Gold</option>
+                              <option value="silver">Silver</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <select
+                            value={draft.metal}
+                            onChange={(e) => updateDraft(item, 'metal', e.target.value)}
+                            style={selectStyle}
+                          >
+                            <option value="">--</option>
+                            <option value="gold">Gold</option>
+                            <option value="silver">Silver</option>
+                          </select>
+                        )}
+                      </td>
+
+                      <td style={cellStyle}>
+                        {isSwitchLike ? (
+                          <div style={stackedFieldStyle}>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={draft.quantity_grams ?? ''}
+                              onChange={(e) => updateDraft(item, 'quantity_grams', e.target.value)}
+                              style={gramsStyle}
+                              placeholder="Input grams"
+                            />
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={draft.to_quantity_grams ?? ''}
+                              onChange={(e) => updateDraft(item, 'to_quantity_grams', e.target.value)}
+                              style={gramsStyle}
+                              placeholder="Output grams"
+                            />
+                          </div>
+                        ) : (
+                          <input
+                            type="number"
+                            step="0.000001"
+                            value={draft.quantity_grams ?? ''}
+                            onChange={(e) => updateDraft(item, 'quantity_grams', e.target.value)}
+                            style={gramsStyle}
+                          />
+                        )}
+                      </td>
+
+                      <td style={cellStyle}>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={draft.ratio ?? ''}
+                          onChange={(e) => updateDraft(item, 'ratio', e.target.value)}
+                          style={ratioStyle}
+                        />
+                      </td>
+
+                      <td style={{ ...cellStyle, width: noteExpanded ? 250 : 128 }}>
+                        <textarea
+                          value={draft.notes}
+                          onChange={(e) => updateDraft(item, 'notes', e.target.value)}
+                          onFocus={() => setExpandedNotesId(item.id)}
+                          onBlur={() => setExpandedNotesId('')}
+                          placeholder=""
+                          style={noteExpanded ? expandedNotesStyle : compactNotesStyle}
+                        />
+                      </td>
+
+                      <td style={cellStyle}>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap' }}>
+                          <button
+                            onClick={() => resolve(item)}
+                            disabled={savingId === item.id}
+                            style={approveButtonStyle}
+                          >
+                            {savingId === item.id ? 'Saving...' : 'Approve'}
+                          </button>
+                          <button
+                            onClick={() => resolve(item, 'ignore')}
+                            disabled={savingId === item.id}
+                            style={rowIgnoreButtonStyle}
+                          >
+                            {savingId === item.id ? 'Saving...' : 'Ignore'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div
+          ref={bottomScrollRef}
+          style={{
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            width: '100%',
+            maxWidth: '100%',
+            height: 20,
+            border: '1px solid #cbd5e1',
+            borderRadius: 0,
+            background: 'rgba(248, 250, 252, 0.98)',
+            boxShadow: '0 4px 14px rgba(15, 23, 42, 0.12)',
+            display: 'none',
+            position: 'fixed',
+            bottom: 0,
+            left: 0,
+            zIndex: 200,
+            boxSizing: 'border-box',
+          paddingBottom: 20
+          }}
+        >
+          <div ref={bottomInnerRef} style={{ width: 1180, height: 1 }} />
+        </div>
+      </div>
+
+      {infoItem ? (
+        <div
+          onClick={() => setInfoItem(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+            zIndex: 9999
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 760,
+              background: '#fff',
+              borderRadius: 12,
+              padding: 18,
+              boxShadow: '0 20px 40px rgba(0,0,0,0.25)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h3 style={{ margin: 0 }}>More Information</h3>
+              <button onClick={() => setInfoItem(null)} style={{ ...compactButtonStyle, minWidth: 88 }}>Close</button>
+            </div>
+
+            <div
+              style={{
+                maxHeight: 420,
+                overflowY: 'auto',
+                paddingRight: 6
+              }}
+            >
+              <div style={{ display: 'grid', gap: 8, fontSize: 14 }}>
+                <div><strong>Date:</strong> {infoItem.raw_date || '-'}</div>
+                <div><strong>Row:</strong> {infoItem.row_index}{infoItem.paired_row_index ? ` + ${infoItem.paired_row_index}` : ''}</div>
+                <div><strong>Definition:</strong> {infoItem.raw_definition || '-'}</div>
+                <div><strong>Amount (EUR):</strong> {infoItem.raw_amount_eur || '-'}</div>
+                <div><strong>Ratio:</strong> {infoItem.raw_gold_silver_ratio || '-'}</div>
+                {infoItem.paired_raw_definition ? <div><strong>Paired Row Definition:</strong> {infoItem.paired_raw_definition}</div> : null}
+                <div><strong>Suggested Type:</strong> {titleType(infoItem.suggestion_type)}</div>
+                {getParsedGramsRows(infoItem).map(([label, value]) => (
+                  <div key={label}><strong>{label}:</strong> {value}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,119 @@
+import { useEffect, useMemo, useState } from 'react';
+import client from '../api/client';
+import ReconciliationTable from '../components/ReconciliationTable';
+
+function isHiddenNoise(item) {
+  const text = `${item.raw_definition || ''}`.toLowerCase().trim();
+  return (
+    text.startsWith('za') ||
+    text.startsWith('bank transfer') ||
+    text.startsWith('wire transfer') ||
+    text.startsWith('sepa') ||
+    text.startsWith('cash deposit') ||
+    text.startsWith('cash withdrawal') ||
+    text.startsWith('zahlung') ||
+    text.startsWith('ueberweisung')
+  );
+}
+
+export default function ReconciliationPage({ embedded = false, initialStatus = 'pending', pageTitle = 'Upload & Assign' }) {
+  const [cases, setCases] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [search, setSearch] = useState('');
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const response = await client.get(`/reconciliation?status=${initialStatus || 'pending'}`);
+      setCases(response.data || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const handleProcessed = (ids) => {
+    setCases((prev) => (prev || []).filter((item) => !ids.includes(item.id)));
+  };
+
+  const filteredCases = useMemo(() => {
+    return (cases || []).filter((item) => {
+      if (isHiddenNoise(item)) return false;
+      const matchesType = typeFilter === 'all' ? true : item.suggestion_type === typeFilter;
+      const text = `${item.raw_definition || ''} ${item.notes || ''} ${item.raw_date || ''}`.toLowerCase();
+      const matchesSearch = search.trim() === '' ? true : text.includes(search.toLowerCase());
+      return matchesType && matchesSearch;
+    });
+  }, [cases, typeFilter, search]);
+
+  return (
+    <div className="stack">
+      {!embedded ? (
+        <>
+          <h2>{pageTitle}</h2>
+          <p>
+            Review pending imported rows, then approve or ignore them before they affect holdings.
+          </p>
+        </>
+      ) : (
+        <div className="card">
+          <h2 style={{ marginTop: 0, marginBottom: 8 }}>Assignments</h2>
+          <p style={{ marginBottom: 0 }}>
+            Review pending imported rows here immediately after upload. Approve the valid ones and ignore rows that should not affect holdings.
+          </p>
+        </div>
+      )}
+
+      <div className="card" style={{ padding: 10 }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, minmax(180px, 1fr))',
+            gap: 10
+          }}
+        >
+          <label>
+            <div>Assigned Type</div>
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} style={{ width: '100%', padding: 6 }}>
+              <option value="all">All</option>
+              <option value="purchase">Purchase</option>
+              <option value="transfer_in">Transfer In</option>
+              <option value="transfer_out">Transfer Out</option>
+              <option value="depot_fee">Depot Fee</option>
+              <option value="switch_pilot">Switch Pilot</option>
+              <option value="manual_switch">Manual Switch</option>
+              <option value="sale">Sale</option>
+              <option value="unknown">Unknown</option>
+              <option value="ignored">Ignored</option>
+            </select>
+          </label>
+
+          <label>
+            <div>Search</div>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Definition, Notes, Date"
+              style={{ width: '100%', padding: 6, boxSizing: 'border-box' }}
+            />
+          </label>
+        </div>
+      </div>
+
+      {loading ? (
+        <p>Loading transactions...</p>
+      ) : (
+        <ReconciliationTable
+          cases={filteredCases}
+          refresh={refresh}
+          currentStatus={initialStatus}
+          onProcessed={handleProcessed}
+        />
+      )}
+    </div>
+  );
+}

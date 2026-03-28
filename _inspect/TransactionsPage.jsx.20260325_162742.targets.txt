@@ -1,0 +1,942 @@
+﻿
+==== TARGET BLOCK: pattern [function\s+TransactionsPage] at line 84 ====
+0034:   const quantity = Number(qty);
+0035:   const purchaseRatio = Number(basisRatio);
+0036:   const futureRatio = Number(forecastRatio);
+0037:   const fee = Number(feePercent);
+0038: 
+0039:   if (!Number.isFinite(quantity) || !Number.isFinite(purchaseRatio) || !Number.isFinite(futureRatio)) {
+0040:     return null;
+0041:   }
+0042: 
+0043:   if (quantity <= 0 || purchaseRatio <= 0 || futureRatio <= 0) {
+0044:     return null;
+0045:   }
+0046: 
+0047:   const feeMultiplier = (100 - fee) / 100;
+0048:   if (feeMultiplier <= 0) {
+0049:     return null;
+0050:   }
+0051: 
+0052:   let baseline;
+0053:   let projected;
+0054: 
+0055:   if (String(currentMetal).toLowerCase() === 'silver') {
+0056:     baseline = quantity / feeMultiplier / purchaseRatio;
+0057:     projected = quantity / futureRatio * feeMultiplier;
+0058:   } else if (String(currentMetal).toLowerCase() === 'gold') {
+0059:     baseline = quantity / feeMultiplier * purchaseRatio;
+0060:     projected = quantity * futureRatio * feeMultiplier;
+0061:   } else {
+0062:     return null;
+0063:   }
+0064: 
+0065:   if (!Number.isFinite(baseline) || baseline <= 0 || !Number.isFinite(projected)) {
+0066:     return null;
+0067:   }
+0068: 
+0069:   return ((projected - baseline) / baseline) * 100;
+0070: }
+0071: 
+0072: function displayHistoryMetal(step, fallbackMetal) {
+0073:   const type = String(step?.type || '').toLowerCase();
+0074:   const fromMetal = step?.from_metal ? titleCaseMetal(step.from_metal) : '';
+0075:   const toMetal = step?.to_metal ? titleCaseMetal(step.to_metal) : '';
+0076: 
+0077:   if (type === 'switch' && fromMetal && toMetal) {
+0078:     return `${fromMetal} -> ${toMetal}`;
+0079:   }
+0080: 
+0081:   return titleCaseMetal(step?.metal || fallbackMetal);
+0082: }
+0083: 
+0084: export default function TransactionsPage() {
+0085:   const [rows, setRows] = useState([]);
+0086:   const [summary, setSummary] = useState(null);
+0087:   const [forecastRatios, setForecastRatios] = useState({});
+0088:   const [expanded, setExpanded] = useState({});
+0089:   const [showDepotFeesByLot, setShowDepotFeesByLot] = useState({});
+0090: 
+0091:   const refresh = async () => {
+0092:     const response = await client.get('/dashboard/current-holdings-ledger');
+0093:     setRows(response.data?.holdings || []);
+0094:     setSummary(response.data?.summary || null);
+0095:   };
+0096: 
+0097:   useEffect(() => {
+0098:     refresh();
+0099:   }, []);
+0100: 
+0101:   const displayRows = useMemo(() => {
+0102:     return (rows || []).map((row) => {
+0103:       const forecastRatio = forecastRatios[row.lot_key] ?? '';
+0104:       const projectedGain = calculateProjectedGain(
+0105:         row.metal,
+0106:         row.quantity_grams,
+0107:         row.basis_ratio,
+0108:         forecastRatio,
+0109:         3
+0110:       );
+0111: 
+0112:       const depotFeeRows = (row.history || []).filter((h) =>
+0113:         ['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase())
+0114:       );
+0115: 
+0116:       const depotFeeTotal = depotFeeRows.reduce((sum, h) => {
+0117:         const n = Number(h.quantity_grams);
+0118:         return sum + (Number.isFinite(n) ? n : 0);
+0119:       }, 0);
+0120: 
+0121:       const showDepotFees = !!showDepotFeesByLot[row.lot_key];
+0122: 
+0123:       const filteredHistory = (row.history || []).filter((h) => {
+0124:         if (showDepotFees) return true;
+0125:         return !['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase());
+0126:       });
+0127: 
+0128:       const orderedHistory = [...filteredHistory];
+0129: 
+0130:       return {
+0131:         ...row,
+0132:         forecastRatio,
+0133:         projectedGain,
+0134:         filteredHistory: orderedHistory,
+
+==== TARGET BLOCK: pattern [const\s+TransactionsPage] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [useState] at line 1 ====
+0001: import { useEffect, useMemo, useState } from 'react';
+0002: import client from '../api/client';
+0003: 
+0004: function titleCaseMetal(value) {
+0005:   if (!value) return '-';
+0006:   return String(value).charAt(0).toUpperCase() + String(value).slice(1).toLowerCase();
+0007: }
+0008: 
+0009: function titleCaseType(value) {
+0010:   if (!value) return '-';
+0011:   const normalized = String(value).toLowerCase();
+0012: 
+0013:   if (normalized === 'switch' || normalized === 'switch_out') return 'Switch';
+0014:   if (normalized === 'switch_pilot') return 'Switch Pilot';
+0015:   if (normalized === 'manual_switch') return 'Manual Switch';
+0016:   if (normalized === 'depot_fee' || normalized === 'storage_fee') return 'Depot Fee';
+0017:   if (normalized === 'transfer_out') return 'Transfer Out';
+0018:   if (normalized === 'transfer_in') return 'Transfer In';
+0019:   if (normalized === 'sale') return 'Sale';
+0020:   if (normalized === 'purchase') return 'Purchase';
+0021: 
+0022:   return String(value)
+0023:     .replaceAll('_', ' ')
+0024:     .replace(/\b\w/g, (m) => m.toUpperCase());
+0025: }
+0026: 
+0027: function roundNumber(value, digits = 2) {
+0028:   const num = Number(value);
+0029:   if (!Number.isFinite(num)) return '-';
+0030:   return num.toFixed(digits);
+0031: }
+0032: 
+0033: function calculateProjectedGain(currentMetal, qty, basisRatio, forecastRatio, feePercent = 3) {
+0034:   const quantity = Number(qty);
+0035:   const purchaseRatio = Number(basisRatio);
+0036:   const futureRatio = Number(forecastRatio);
+0037:   const fee = Number(feePercent);
+0038: 
+0039:   if (!Number.isFinite(quantity) || !Number.isFinite(purchaseRatio) || !Number.isFinite(futureRatio)) {
+0040:     return null;
+0041:   }
+0042: 
+0043:   if (quantity <= 0 || purchaseRatio <= 0 || futureRatio <= 0) {
+0044:     return null;
+0045:   }
+0046: 
+0047:   const feeMultiplier = (100 - fee) / 100;
+0048:   if (feeMultiplier <= 0) {
+0049:     return null;
+0050:   }
+0051: 
+
+==== TARGET BLOCK: pattern [useMemo] at line 1 ====
+0001: import { useEffect, useMemo, useState } from 'react';
+0002: import client from '../api/client';
+0003: 
+0004: function titleCaseMetal(value) {
+0005:   if (!value) return '-';
+0006:   return String(value).charAt(0).toUpperCase() + String(value).slice(1).toLowerCase();
+0007: }
+0008: 
+0009: function titleCaseType(value) {
+0010:   if (!value) return '-';
+0011:   const normalized = String(value).toLowerCase();
+0012: 
+0013:   if (normalized === 'switch' || normalized === 'switch_out') return 'Switch';
+0014:   if (normalized === 'switch_pilot') return 'Switch Pilot';
+0015:   if (normalized === 'manual_switch') return 'Manual Switch';
+0016:   if (normalized === 'depot_fee' || normalized === 'storage_fee') return 'Depot Fee';
+0017:   if (normalized === 'transfer_out') return 'Transfer Out';
+0018:   if (normalized === 'transfer_in') return 'Transfer In';
+0019:   if (normalized === 'sale') return 'Sale';
+0020:   if (normalized === 'purchase') return 'Purchase';
+0021: 
+0022:   return String(value)
+0023:     .replaceAll('_', ' ')
+0024:     .replace(/\b\w/g, (m) => m.toUpperCase());
+0025: }
+0026: 
+0027: function roundNumber(value, digits = 2) {
+0028:   const num = Number(value);
+0029:   if (!Number.isFinite(num)) return '-';
+0030:   return num.toFixed(digits);
+0031: }
+0032: 
+0033: function calculateProjectedGain(currentMetal, qty, basisRatio, forecastRatio, feePercent = 3) {
+0034:   const quantity = Number(qty);
+0035:   const purchaseRatio = Number(basisRatio);
+0036:   const futureRatio = Number(forecastRatio);
+0037:   const fee = Number(feePercent);
+0038: 
+0039:   if (!Number.isFinite(quantity) || !Number.isFinite(purchaseRatio) || !Number.isFinite(futureRatio)) {
+0040:     return null;
+0041:   }
+0042: 
+0043:   if (quantity <= 0 || purchaseRatio <= 0 || futureRatio <= 0) {
+0044:     return null;
+0045:   }
+0046: 
+0047:   const feeMultiplier = (100 - fee) / 100;
+0048:   if (feeMultiplier <= 0) {
+0049:     return null;
+0050:   }
+0051: 
+
+==== TARGET BLOCK: pattern [filteredTransactions] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [transactions\.map] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [\.map\(] at line 102 ====
+0052:   let baseline;
+0053:   let projected;
+0054: 
+0055:   if (String(currentMetal).toLowerCase() === 'silver') {
+0056:     baseline = quantity / feeMultiplier / purchaseRatio;
+0057:     projected = quantity / futureRatio * feeMultiplier;
+0058:   } else if (String(currentMetal).toLowerCase() === 'gold') {
+0059:     baseline = quantity / feeMultiplier * purchaseRatio;
+0060:     projected = quantity * futureRatio * feeMultiplier;
+0061:   } else {
+0062:     return null;
+0063:   }
+0064: 
+0065:   if (!Number.isFinite(baseline) || baseline <= 0 || !Number.isFinite(projected)) {
+0066:     return null;
+0067:   }
+0068: 
+0069:   return ((projected - baseline) / baseline) * 100;
+0070: }
+0071: 
+0072: function displayHistoryMetal(step, fallbackMetal) {
+0073:   const type = String(step?.type || '').toLowerCase();
+0074:   const fromMetal = step?.from_metal ? titleCaseMetal(step.from_metal) : '';
+0075:   const toMetal = step?.to_metal ? titleCaseMetal(step.to_metal) : '';
+0076: 
+0077:   if (type === 'switch' && fromMetal && toMetal) {
+0078:     return `${fromMetal} -> ${toMetal}`;
+0079:   }
+0080: 
+0081:   return titleCaseMetal(step?.metal || fallbackMetal);
+0082: }
+0083: 
+0084: export default function TransactionsPage() {
+0085:   const [rows, setRows] = useState([]);
+0086:   const [summary, setSummary] = useState(null);
+0087:   const [forecastRatios, setForecastRatios] = useState({});
+0088:   const [expanded, setExpanded] = useState({});
+0089:   const [showDepotFeesByLot, setShowDepotFeesByLot] = useState({});
+0090: 
+0091:   const refresh = async () => {
+0092:     const response = await client.get('/dashboard/current-holdings-ledger');
+0093:     setRows(response.data?.holdings || []);
+0094:     setSummary(response.data?.summary || null);
+0095:   };
+0096: 
+0097:   useEffect(() => {
+0098:     refresh();
+0099:   }, []);
+0100: 
+0101:   const displayRows = useMemo(() => {
+0102:     return (rows || []).map((row) => {
+0103:       const forecastRatio = forecastRatios[row.lot_key] ?? '';
+0104:       const projectedGain = calculateProjectedGain(
+0105:         row.metal,
+0106:         row.quantity_grams,
+0107:         row.basis_ratio,
+0108:         forecastRatio,
+0109:         3
+0110:       );
+0111: 
+0112:       const depotFeeRows = (row.history || []).filter((h) =>
+0113:         ['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase())
+0114:       );
+0115: 
+0116:       const depotFeeTotal = depotFeeRows.reduce((sum, h) => {
+0117:         const n = Number(h.quantity_grams);
+0118:         return sum + (Number.isFinite(n) ? n : 0);
+0119:       }, 0);
+0120: 
+0121:       const showDepotFees = !!showDepotFeesByLot[row.lot_key];
+0122: 
+0123:       const filteredHistory = (row.history || []).filter((h) => {
+0124:         if (showDepotFees) return true;
+0125:         return !['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase());
+0126:       });
+0127: 
+0128:       const orderedHistory = [...filteredHistory];
+0129: 
+0130:       return {
+0131:         ...row,
+0132:         forecastRatio,
+0133:         projectedGain,
+0134:         filteredHistory: orderedHistory,
+0135:         showDepotFees,
+0136:         depotFeeCount: depotFeeRows.length,
+0137:         depotFeeTotal
+0138:       };
+0139:     });
+0140:   }, [rows, forecastRatios, showDepotFeesByLot]);
+0141: 
+0142:   const toggleExpanded = (lotKey) => {
+0143:     setExpanded((prev) => ({ ...prev, [lotKey]: !prev[lotKey] }));
+0144:   };
+0145: 
+0146:   const toggleDepotFees = (lotKey) => {
+0147:     setShowDepotFeesByLot((prev) => ({ ...prev, [lotKey]: !prev[lotKey] }));
+0148:   };
+0149: 
+0150:   const updateForecastRatio = (lotKey, value) => {
+0151:     setForecastRatios((prev) => ({ ...prev, [lotKey]: value }));
+0152:   };
+
+==== TARGET BLOCK: pattern [expanded] at line 88 ====
+0038: 
+0039:   if (!Number.isFinite(quantity) || !Number.isFinite(purchaseRatio) || !Number.isFinite(futureRatio)) {
+0040:     return null;
+0041:   }
+0042: 
+0043:   if (quantity <= 0 || purchaseRatio <= 0 || futureRatio <= 0) {
+0044:     return null;
+0045:   }
+0046: 
+0047:   const feeMultiplier = (100 - fee) / 100;
+0048:   if (feeMultiplier <= 0) {
+0049:     return null;
+0050:   }
+0051: 
+0052:   let baseline;
+0053:   let projected;
+0054: 
+0055:   if (String(currentMetal).toLowerCase() === 'silver') {
+0056:     baseline = quantity / feeMultiplier / purchaseRatio;
+0057:     projected = quantity / futureRatio * feeMultiplier;
+0058:   } else if (String(currentMetal).toLowerCase() === 'gold') {
+0059:     baseline = quantity / feeMultiplier * purchaseRatio;
+0060:     projected = quantity * futureRatio * feeMultiplier;
+0061:   } else {
+0062:     return null;
+0063:   }
+0064: 
+0065:   if (!Number.isFinite(baseline) || baseline <= 0 || !Number.isFinite(projected)) {
+0066:     return null;
+0067:   }
+0068: 
+0069:   return ((projected - baseline) / baseline) * 100;
+0070: }
+0071: 
+0072: function displayHistoryMetal(step, fallbackMetal) {
+0073:   const type = String(step?.type || '').toLowerCase();
+0074:   const fromMetal = step?.from_metal ? titleCaseMetal(step.from_metal) : '';
+0075:   const toMetal = step?.to_metal ? titleCaseMetal(step.to_metal) : '';
+0076: 
+0077:   if (type === 'switch' && fromMetal && toMetal) {
+0078:     return `${fromMetal} -> ${toMetal}`;
+0079:   }
+0080: 
+0081:   return titleCaseMetal(step?.metal || fallbackMetal);
+0082: }
+0083: 
+0084: export default function TransactionsPage() {
+0085:   const [rows, setRows] = useState([]);
+0086:   const [summary, setSummary] = useState(null);
+0087:   const [forecastRatios, setForecastRatios] = useState({});
+0088:   const [expanded, setExpanded] = useState({});
+0089:   const [showDepotFeesByLot, setShowDepotFeesByLot] = useState({});
+0090: 
+0091:   const refresh = async () => {
+0092:     const response = await client.get('/dashboard/current-holdings-ledger');
+0093:     setRows(response.data?.holdings || []);
+0094:     setSummary(response.data?.summary || null);
+0095:   };
+0096: 
+0097:   useEffect(() => {
+0098:     refresh();
+0099:   }, []);
+0100: 
+0101:   const displayRows = useMemo(() => {
+0102:     return (rows || []).map((row) => {
+0103:       const forecastRatio = forecastRatios[row.lot_key] ?? '';
+0104:       const projectedGain = calculateProjectedGain(
+0105:         row.metal,
+0106:         row.quantity_grams,
+0107:         row.basis_ratio,
+0108:         forecastRatio,
+0109:         3
+0110:       );
+0111: 
+0112:       const depotFeeRows = (row.history || []).filter((h) =>
+0113:         ['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase())
+0114:       );
+0115: 
+0116:       const depotFeeTotal = depotFeeRows.reduce((sum, h) => {
+0117:         const n = Number(h.quantity_grams);
+0118:         return sum + (Number.isFinite(n) ? n : 0);
+0119:       }, 0);
+0120: 
+0121:       const showDepotFees = !!showDepotFeesByLot[row.lot_key];
+0122: 
+0123:       const filteredHistory = (row.history || []).filter((h) => {
+0124:         if (showDepotFees) return true;
+0125:         return !['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase());
+0126:       });
+0127: 
+0128:       const orderedHistory = [...filteredHistory];
+0129: 
+0130:       return {
+0131:         ...row,
+0132:         forecastRatio,
+0133:         projectedGain,
+0134:         filteredHistory: orderedHistory,
+0135:         showDepotFees,
+0136:         depotFeeCount: depotFeeRows.length,
+0137:         depotFeeTotal
+0138:       };
+
+==== TARGET BLOCK: pattern [history] at line 72 ====
+0022:   return String(value)
+0023:     .replaceAll('_', ' ')
+0024:     .replace(/\b\w/g, (m) => m.toUpperCase());
+0025: }
+0026: 
+0027: function roundNumber(value, digits = 2) {
+0028:   const num = Number(value);
+0029:   if (!Number.isFinite(num)) return '-';
+0030:   return num.toFixed(digits);
+0031: }
+0032: 
+0033: function calculateProjectedGain(currentMetal, qty, basisRatio, forecastRatio, feePercent = 3) {
+0034:   const quantity = Number(qty);
+0035:   const purchaseRatio = Number(basisRatio);
+0036:   const futureRatio = Number(forecastRatio);
+0037:   const fee = Number(feePercent);
+0038: 
+0039:   if (!Number.isFinite(quantity) || !Number.isFinite(purchaseRatio) || !Number.isFinite(futureRatio)) {
+0040:     return null;
+0041:   }
+0042: 
+0043:   if (quantity <= 0 || purchaseRatio <= 0 || futureRatio <= 0) {
+0044:     return null;
+0045:   }
+0046: 
+0047:   const feeMultiplier = (100 - fee) / 100;
+0048:   if (feeMultiplier <= 0) {
+0049:     return null;
+0050:   }
+0051: 
+0052:   let baseline;
+0053:   let projected;
+0054: 
+0055:   if (String(currentMetal).toLowerCase() === 'silver') {
+0056:     baseline = quantity / feeMultiplier / purchaseRatio;
+0057:     projected = quantity / futureRatio * feeMultiplier;
+0058:   } else if (String(currentMetal).toLowerCase() === 'gold') {
+0059:     baseline = quantity / feeMultiplier * purchaseRatio;
+0060:     projected = quantity * futureRatio * feeMultiplier;
+0061:   } else {
+0062:     return null;
+0063:   }
+0064: 
+0065:   if (!Number.isFinite(baseline) || baseline <= 0 || !Number.isFinite(projected)) {
+0066:     return null;
+0067:   }
+0068: 
+0069:   return ((projected - baseline) / baseline) * 100;
+0070: }
+0071: 
+0072: function displayHistoryMetal(step, fallbackMetal) {
+0073:   const type = String(step?.type || '').toLowerCase();
+0074:   const fromMetal = step?.from_metal ? titleCaseMetal(step.from_metal) : '';
+0075:   const toMetal = step?.to_metal ? titleCaseMetal(step.to_metal) : '';
+0076: 
+0077:   if (type === 'switch' && fromMetal && toMetal) {
+0078:     return `${fromMetal} -> ${toMetal}`;
+0079:   }
+0080: 
+0081:   return titleCaseMetal(step?.metal || fallbackMetal);
+0082: }
+0083: 
+0084: export default function TransactionsPage() {
+0085:   const [rows, setRows] = useState([]);
+0086:   const [summary, setSummary] = useState(null);
+0087:   const [forecastRatios, setForecastRatios] = useState({});
+0088:   const [expanded, setExpanded] = useState({});
+0089:   const [showDepotFeesByLot, setShowDepotFeesByLot] = useState({});
+0090: 
+0091:   const refresh = async () => {
+0092:     const response = await client.get('/dashboard/current-holdings-ledger');
+0093:     setRows(response.data?.holdings || []);
+0094:     setSummary(response.data?.summary || null);
+0095:   };
+0096: 
+0097:   useEffect(() => {
+0098:     refresh();
+0099:   }, []);
+0100: 
+0101:   const displayRows = useMemo(() => {
+0102:     return (rows || []).map((row) => {
+0103:       const forecastRatio = forecastRatios[row.lot_key] ?? '';
+0104:       const projectedGain = calculateProjectedGain(
+0105:         row.metal,
+0106:         row.quantity_grams,
+0107:         row.basis_ratio,
+0108:         forecastRatio,
+0109:         3
+0110:       );
+0111: 
+0112:       const depotFeeRows = (row.history || []).filter((h) =>
+0113:         ['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase())
+0114:       );
+0115: 
+0116:       const depotFeeTotal = depotFeeRows.reduce((sum, h) => {
+0117:         const n = Number(h.quantity_grams);
+0118:         return sum + (Number.isFinite(n) ? n : 0);
+0119:       }, 0);
+0120: 
+0121:       const showDepotFees = !!showDepotFeesByLot[row.lot_key];
+0122: 
+
+==== TARGET BLOCK: pattern [<thead>] at line 174 ====
+0124:         if (showDepotFees) return true;
+0125:         return !['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase());
+0126:       });
+0127: 
+0128:       const orderedHistory = [...filteredHistory];
+0129: 
+0130:       return {
+0131:         ...row,
+0132:         forecastRatio,
+0133:         projectedGain,
+0134:         filteredHistory: orderedHistory,
+0135:         showDepotFees,
+0136:         depotFeeCount: depotFeeRows.length,
+0137:         depotFeeTotal
+0138:       };
+0139:     });
+0140:   }, [rows, forecastRatios, showDepotFeesByLot]);
+0141: 
+0142:   const toggleExpanded = (lotKey) => {
+0143:     setExpanded((prev) => ({ ...prev, [lotKey]: !prev[lotKey] }));
+0144:   };
+0145: 
+0146:   const toggleDepotFees = (lotKey) => {
+0147:     setShowDepotFeesByLot((prev) => ({ ...prev, [lotKey]: !prev[lotKey] }));
+0148:   };
+0149: 
+0150:   const updateForecastRatio = (lotKey, value) => {
+0151:     setForecastRatios((prev) => ({ ...prev, [lotKey]: value }));
+0152:   };
+0153: 
+0154:   return (
+0155:     <div className="stack">
+0156:       <div className="card">
+0157:         <h2>Current Portfolio</h2>
+0158:         <p>
+0159:           This page shows only what is currently held now. Older forms of the metal are shown inside the expandable history.
+0160:         </p>
+0161: 
+0162:         {summary ? (
+0163:           <div className="grid-4">
+0164:             <div><strong>Gold now:</strong> {summary.gold_grams}</div>
+0165:             <div><strong>Silver now:</strong> {summary.silver_grams}</div>
+0166:             <div><strong>Switches:</strong> {summary.switch_count}</div>
+0167:             <div><strong>Storage / Depot fees:</strong> {summary.storage_fee_grams}</div>
+0168:           </div>
+0169:         ) : null}
+0170:       </div>
+0171: 
+0172:       <div className="card" style={{ overflowX: 'auto' }}>
+0173:         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
+0174:           <thead>
+0175:             <tr>
+0176:               <th style={{ textAlign: 'left', padding: '8px' }}>Date</th>
+0177:               <th style={{ textAlign: 'left', padding: '8px' }}>Metal</th>
+0178:               <th style={{ textAlign: 'left', padding: '8px' }}>Grams</th>
+0179:               <th style={{ textAlign: 'left', padding: '8px' }}>ID</th>
+0180:               <th style={{ textAlign: 'left', padding: '8px' }}>Purchase Ratio</th>
+0181:               <th style={{ textAlign: 'left', padding: '8px' }}>Forecast Ratio</th>
+0182:               <th style={{ textAlign: 'left', padding: '8px' }}>Projected Gain</th>
+0183:               <th style={{ textAlign: 'left', padding: '8px' }}>History</th>
+0184:             </tr>
+0185:           </thead>
+0186:           <tbody>
+0187:             {displayRows.map((row) => (
+0188:               <FragmentRow
+0189:                 key={row.lot_key}
+0190:                 row={row}
+0191:                 expanded={!!expanded[row.lot_key]}
+0192:                 onToggle={() => toggleExpanded(row.lot_key)}
+0193:                 onForecastChange={(value) => updateForecastRatio(row.lot_key, value)}
+0194:                 onToggleDepotFees={() => toggleDepotFees(row.lot_key)}
+0195:               />
+0196:             ))}
+0197:           </tbody>
+0198:         </table>
+0199:       </div>
+0200:     </div>
+0201:   );
+0202: }
+0203: 
+0204: function FragmentRow({ row, expanded, onToggle, onForecastChange, onToggleDepotFees }) {
+0205:   return (
+0206:     <>
+0207:       <tr>
+0208:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{row.opened_on || '-'}</td>
+0209:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{titleCaseMetal(row.metal)}</td>
+0210:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{roundNumber(row.quantity_grams, 4)}</td>
+0211:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb', fontFamily: 'monospace', fontSize: 12 }}>
+0212:           {row.display_transaction_code || '-'}
+0213:         </td>
+0214:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0215:           {row.basis_ratio == null ? '-' : roundNumber(row.basis_ratio, 2)}
+0216:         </td>
+0217:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0218:           <input
+0219:             type="number"
+0220:             step="0.01"
+0221:             value={row.forecastRatio}
+0222:             onChange={(e) => onForecastChange(e.target.value)}
+0223:             placeholder="e.g. 70"
+0224:             style={{ width: 90, padding: '6px' }}
+
+==== TARGET BLOCK: pattern [<tbody>] at line 186 ====
+0136:         depotFeeCount: depotFeeRows.length,
+0137:         depotFeeTotal
+0138:       };
+0139:     });
+0140:   }, [rows, forecastRatios, showDepotFeesByLot]);
+0141: 
+0142:   const toggleExpanded = (lotKey) => {
+0143:     setExpanded((prev) => ({ ...prev, [lotKey]: !prev[lotKey] }));
+0144:   };
+0145: 
+0146:   const toggleDepotFees = (lotKey) => {
+0147:     setShowDepotFeesByLot((prev) => ({ ...prev, [lotKey]: !prev[lotKey] }));
+0148:   };
+0149: 
+0150:   const updateForecastRatio = (lotKey, value) => {
+0151:     setForecastRatios((prev) => ({ ...prev, [lotKey]: value }));
+0152:   };
+0153: 
+0154:   return (
+0155:     <div className="stack">
+0156:       <div className="card">
+0157:         <h2>Current Portfolio</h2>
+0158:         <p>
+0159:           This page shows only what is currently held now. Older forms of the metal are shown inside the expandable history.
+0160:         </p>
+0161: 
+0162:         {summary ? (
+0163:           <div className="grid-4">
+0164:             <div><strong>Gold now:</strong> {summary.gold_grams}</div>
+0165:             <div><strong>Silver now:</strong> {summary.silver_grams}</div>
+0166:             <div><strong>Switches:</strong> {summary.switch_count}</div>
+0167:             <div><strong>Storage / Depot fees:</strong> {summary.storage_fee_grams}</div>
+0168:           </div>
+0169:         ) : null}
+0170:       </div>
+0171: 
+0172:       <div className="card" style={{ overflowX: 'auto' }}>
+0173:         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
+0174:           <thead>
+0175:             <tr>
+0176:               <th style={{ textAlign: 'left', padding: '8px' }}>Date</th>
+0177:               <th style={{ textAlign: 'left', padding: '8px' }}>Metal</th>
+0178:               <th style={{ textAlign: 'left', padding: '8px' }}>Grams</th>
+0179:               <th style={{ textAlign: 'left', padding: '8px' }}>ID</th>
+0180:               <th style={{ textAlign: 'left', padding: '8px' }}>Purchase Ratio</th>
+0181:               <th style={{ textAlign: 'left', padding: '8px' }}>Forecast Ratio</th>
+0182:               <th style={{ textAlign: 'left', padding: '8px' }}>Projected Gain</th>
+0183:               <th style={{ textAlign: 'left', padding: '8px' }}>History</th>
+0184:             </tr>
+0185:           </thead>
+0186:           <tbody>
+0187:             {displayRows.map((row) => (
+0188:               <FragmentRow
+0189:                 key={row.lot_key}
+0190:                 row={row}
+0191:                 expanded={!!expanded[row.lot_key]}
+0192:                 onToggle={() => toggleExpanded(row.lot_key)}
+0193:                 onForecastChange={(value) => updateForecastRatio(row.lot_key, value)}
+0194:                 onToggleDepotFees={() => toggleDepotFees(row.lot_key)}
+0195:               />
+0196:             ))}
+0197:           </tbody>
+0198:         </table>
+0199:       </div>
+0200:     </div>
+0201:   );
+0202: }
+0203: 
+0204: function FragmentRow({ row, expanded, onToggle, onForecastChange, onToggleDepotFees }) {
+0205:   return (
+0206:     <>
+0207:       <tr>
+0208:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{row.opened_on || '-'}</td>
+0209:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{titleCaseMetal(row.metal)}</td>
+0210:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{roundNumber(row.quantity_grams, 4)}</td>
+0211:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb', fontFamily: 'monospace', fontSize: 12 }}>
+0212:           {row.display_transaction_code || '-'}
+0213:         </td>
+0214:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0215:           {row.basis_ratio == null ? '-' : roundNumber(row.basis_ratio, 2)}
+0216:         </td>
+0217:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0218:           <input
+0219:             type="number"
+0220:             step="0.01"
+0221:             value={row.forecastRatio}
+0222:             onChange={(e) => onForecastChange(e.target.value)}
+0223:             placeholder="e.g. 70"
+0224:             style={{ width: 90, padding: '6px' }}
+0225:           />
+0226:         </td>
+0227:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0228:           {row.projectedGain == null ? '-' : `${roundNumber(row.projectedGain, 2)}%`}
+0229:         </td>
+0230:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0231:           <button onClick={onToggle}>
+0232:             {expanded ? 'Hide History' : 'Show History'}
+0233:           </button>
+0234:         </td>
+0235:       </tr>
+0236: 
+
+==== TARGET BLOCK: pattern [display_transaction_code] at line 212 ====
+0162:         {summary ? (
+0163:           <div className="grid-4">
+0164:             <div><strong>Gold now:</strong> {summary.gold_grams}</div>
+0165:             <div><strong>Silver now:</strong> {summary.silver_grams}</div>
+0166:             <div><strong>Switches:</strong> {summary.switch_count}</div>
+0167:             <div><strong>Storage / Depot fees:</strong> {summary.storage_fee_grams}</div>
+0168:           </div>
+0169:         ) : null}
+0170:       </div>
+0171: 
+0172:       <div className="card" style={{ overflowX: 'auto' }}>
+0173:         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
+0174:           <thead>
+0175:             <tr>
+0176:               <th style={{ textAlign: 'left', padding: '8px' }}>Date</th>
+0177:               <th style={{ textAlign: 'left', padding: '8px' }}>Metal</th>
+0178:               <th style={{ textAlign: 'left', padding: '8px' }}>Grams</th>
+0179:               <th style={{ textAlign: 'left', padding: '8px' }}>ID</th>
+0180:               <th style={{ textAlign: 'left', padding: '8px' }}>Purchase Ratio</th>
+0181:               <th style={{ textAlign: 'left', padding: '8px' }}>Forecast Ratio</th>
+0182:               <th style={{ textAlign: 'left', padding: '8px' }}>Projected Gain</th>
+0183:               <th style={{ textAlign: 'left', padding: '8px' }}>History</th>
+0184:             </tr>
+0185:           </thead>
+0186:           <tbody>
+0187:             {displayRows.map((row) => (
+0188:               <FragmentRow
+0189:                 key={row.lot_key}
+0190:                 row={row}
+0191:                 expanded={!!expanded[row.lot_key]}
+0192:                 onToggle={() => toggleExpanded(row.lot_key)}
+0193:                 onForecastChange={(value) => updateForecastRatio(row.lot_key, value)}
+0194:                 onToggleDepotFees={() => toggleDepotFees(row.lot_key)}
+0195:               />
+0196:             ))}
+0197:           </tbody>
+0198:         </table>
+0199:       </div>
+0200:     </div>
+0201:   );
+0202: }
+0203: 
+0204: function FragmentRow({ row, expanded, onToggle, onForecastChange, onToggleDepotFees }) {
+0205:   return (
+0206:     <>
+0207:       <tr>
+0208:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{row.opened_on || '-'}</td>
+0209:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{titleCaseMetal(row.metal)}</td>
+0210:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{roundNumber(row.quantity_grams, 4)}</td>
+0211:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb', fontFamily: 'monospace', fontSize: 12 }}>
+0212:           {row.display_transaction_code || '-'}
+0213:         </td>
+0214:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0215:           {row.basis_ratio == null ? '-' : roundNumber(row.basis_ratio, 2)}
+0216:         </td>
+0217:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0218:           <input
+0219:             type="number"
+0220:             step="0.01"
+0221:             value={row.forecastRatio}
+0222:             onChange={(e) => onForecastChange(e.target.value)}
+0223:             placeholder="e.g. 70"
+0224:             style={{ width: 90, padding: '6px' }}
+0225:           />
+0226:         </td>
+0227:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0228:           {row.projectedGain == null ? '-' : `${roundNumber(row.projectedGain, 2)}%`}
+0229:         </td>
+0230:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0231:           <button onClick={onToggle}>
+0232:             {expanded ? 'Hide History' : 'Show History'}
+0233:           </button>
+0234:         </td>
+0235:       </tr>
+0236: 
+0237:       {expanded ? (
+0238:         <tr>
+0239:           <td colSpan="8" style={{ padding: '10px 12px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
+0240:             <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+0241:               <div>
+0242:                 <strong>Transaction ancestry</strong>
+0243:                 {row.showDepotFees ? (
+0244:                   <div style={{ marginTop: 4, fontSize: 12, color: '#475569' }}>
+0245:                     Total depot fees: {roundNumber(row.depotFeeTotal, 5)} g
+0246:                   </div>
+0247:                 ) : null}
+0248:               </div>
+0249: 
+0250:               <button
+0251:                 type="button"
+0252:                 onClick={onToggleDepotFees}
+0253:                 style={{
+0254:                   display: 'inline-block',
+0255:                   width: 'auto',
+0256:                   minWidth: 0,
+0257:                   padding: '5px 9px',
+0258:                   fontSize: 11,
+0259:                   lineHeight: 1.2,
+0260:                   borderRadius: 6,
+0261:                   border: '1px solid #cbd5e1',
+0262:                   background: '#ffffff',
+
+==== TARGET BLOCK: pattern [transaction_code] at line 212 ====
+0162:         {summary ? (
+0163:           <div className="grid-4">
+0164:             <div><strong>Gold now:</strong> {summary.gold_grams}</div>
+0165:             <div><strong>Silver now:</strong> {summary.silver_grams}</div>
+0166:             <div><strong>Switches:</strong> {summary.switch_count}</div>
+0167:             <div><strong>Storage / Depot fees:</strong> {summary.storage_fee_grams}</div>
+0168:           </div>
+0169:         ) : null}
+0170:       </div>
+0171: 
+0172:       <div className="card" style={{ overflowX: 'auto' }}>
+0173:         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
+0174:           <thead>
+0175:             <tr>
+0176:               <th style={{ textAlign: 'left', padding: '8px' }}>Date</th>
+0177:               <th style={{ textAlign: 'left', padding: '8px' }}>Metal</th>
+0178:               <th style={{ textAlign: 'left', padding: '8px' }}>Grams</th>
+0179:               <th style={{ textAlign: 'left', padding: '8px' }}>ID</th>
+0180:               <th style={{ textAlign: 'left', padding: '8px' }}>Purchase Ratio</th>
+0181:               <th style={{ textAlign: 'left', padding: '8px' }}>Forecast Ratio</th>
+0182:               <th style={{ textAlign: 'left', padding: '8px' }}>Projected Gain</th>
+0183:               <th style={{ textAlign: 'left', padding: '8px' }}>History</th>
+0184:             </tr>
+0185:           </thead>
+0186:           <tbody>
+0187:             {displayRows.map((row) => (
+0188:               <FragmentRow
+0189:                 key={row.lot_key}
+0190:                 row={row}
+0191:                 expanded={!!expanded[row.lot_key]}
+0192:                 onToggle={() => toggleExpanded(row.lot_key)}
+0193:                 onForecastChange={(value) => updateForecastRatio(row.lot_key, value)}
+0194:                 onToggleDepotFees={() => toggleDepotFees(row.lot_key)}
+0195:               />
+0196:             ))}
+0197:           </tbody>
+0198:         </table>
+0199:       </div>
+0200:     </div>
+0201:   );
+0202: }
+0203: 
+0204: function FragmentRow({ row, expanded, onToggle, onForecastChange, onToggleDepotFees }) {
+0205:   return (
+0206:     <>
+0207:       <tr>
+0208:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{row.opened_on || '-'}</td>
+0209:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{titleCaseMetal(row.metal)}</td>
+0210:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{roundNumber(row.quantity_grams, 4)}</td>
+0211:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb', fontFamily: 'monospace', fontSize: 12 }}>
+0212:           {row.display_transaction_code || '-'}
+0213:         </td>
+0214:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0215:           {row.basis_ratio == null ? '-' : roundNumber(row.basis_ratio, 2)}
+0216:         </td>
+0217:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0218:           <input
+0219:             type="number"
+0220:             step="0.01"
+0221:             value={row.forecastRatio}
+0222:             onChange={(e) => onForecastChange(e.target.value)}
+0223:             placeholder="e.g. 70"
+0224:             style={{ width: 90, padding: '6px' }}
+0225:           />
+0226:         </td>
+0227:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0228:           {row.projectedGain == null ? '-' : `${roundNumber(row.projectedGain, 2)}%`}
+0229:         </td>
+0230:         <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+0231:           <button onClick={onToggle}>
+0232:             {expanded ? 'Hide History' : 'Show History'}
+0233:           </button>
+0234:         </td>
+0235:       </tr>
+0236: 
+0237:       {expanded ? (
+0238:         <tr>
+0239:           <td colSpan="8" style={{ padding: '10px 12px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
+0240:             <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+0241:               <div>
+0242:                 <strong>Transaction ancestry</strong>
+0243:                 {row.showDepotFees ? (
+0244:                   <div style={{ marginTop: 4, fontSize: 12, color: '#475569' }}>
+0245:                     Total depot fees: {roundNumber(row.depotFeeTotal, 5)} g
+0246:                   </div>
+0247:                 ) : null}
+0248:               </div>
+0249: 
+0250:               <button
+0251:                 type="button"
+0252:                 onClick={onToggleDepotFees}
+0253:                 style={{
+0254:                   display: 'inline-block',
+0255:                   width: 'auto',
+0256:                   minWidth: 0,
+0257:                   padding: '5px 9px',
+0258:                   fontSize: 11,
+0259:                   lineHeight: 1.2,
+0260:                   borderRadius: 6,
+0261:                   border: '1px solid #cbd5e1',
+0262:                   background: '#ffffff',
+
+==== TARGET BLOCK: pattern [ReconciliationTable] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [const\s+ReconciliationTable] NOT FOUND ====
+
+==== TARGET BLOCK: pattern [function\s+ReconciliationTable] NOT FOUND ====

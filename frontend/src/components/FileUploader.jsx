@@ -1,0 +1,65 @@
+import { useState } from 'react';
+import client from '../api/client';
+
+export default function FileUploader({ onUploaded }) {
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const onChange = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setLoading(true);
+    setMessage('');
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+
+      const { data } = await client.post('/uploads', form, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      const summaryMessage =
+        `Upload complete. New rows processed: ${data.new_row_count}. Duplicate rows skipped: ${data.skipped_duplicate_count}. Suggested review rows: ${data.suggestion_count}.`;
+
+      setMessage(summaryMessage);
+
+      if (onUploaded) {
+        onUploaded({
+          fileName: file.name,
+          uploadBatchId: data.upload_batch_id,
+          status: data.status,
+          suggestionCount: data.suggestion_count,
+          newRowCount: data.new_row_count,
+          skippedDuplicateCount: data.skipped_duplicate_count,
+          message: summaryMessage
+        });
+      }
+    } catch (error) {
+      const apiMessage = error?.response?.data?.error || error?.message || 'Upload failed';
+      const failureMessage = `Upload failed: ${apiMessage}`;
+      setMessage(failureMessage);
+
+      if (onUploaded) {
+        onUploaded({
+          error: true,
+          message: failureMessage
+        });
+      }
+    } finally {
+      setLoading(false);
+      event.target.value = '';
+    }
+  };
+
+  return (
+    <div className="card">
+      <input type="file" accept=".csv" onChange={onChange} disabled={loading} />
+      <p style={{ marginTop: 12 }}>
+        {loading ? 'Uploading and checking only new rows...' : 'Choose a CSV export to start the review process.'}
+      </p>
+      {message && <p>{message}</p>}
+    </div>
+  );
+}

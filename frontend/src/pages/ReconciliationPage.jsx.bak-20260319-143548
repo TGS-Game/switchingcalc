@@ -1,0 +1,133 @@
+import { useEffect, useMemo, useState } from 'react';
+import client from '../api/client';
+import ReconciliationTable from '../components/ReconciliationTable';
+
+function isHiddenNoise(item) {
+  const text = `${item.raw_definition || ''}`.toLowerCase().trim();
+  return (
+    text.startsWith('za') ||
+    text.startsWith('bank transfer') ||
+    text.startsWith('wire transfer') ||
+    text.startsWith('sepa') ||
+    text.startsWith('cash deposit') ||
+    text.startsWith('cash withdrawal') ||
+    text.startsWith('zahlung') ||
+    text.startsWith('ueberweisung')
+  );
+}
+
+export default function ReconciliationPage({ embedded = false }) {
+  const [cases, setCases] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState('pending');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [search, setSearch] = useState('');
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const response = await client.get(`/reconciliation?status=${status}`);
+      setCases(response.data || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, [status]);
+
+  const handleProcessed = (ids) => {
+    if (status !== 'pending') return;
+    setCases((prev) => (prev || []).filter((item) => !ids.includes(item.id)));
+  };
+
+  const filteredCases = useMemo(() => {
+    return (cases || []).filter((item) => {
+      if (isHiddenNoise(item)) return false;
+      const matchesType = typeFilter === 'all' ? true : item.suggestion_type === typeFilter;
+      const text = `${item.raw_definition || ''} ${item.notes || ''} ${item.raw_date || ''}`.toLowerCase();
+      const matchesSearch = search.trim() === '' ? true : text.includes(search.toLowerCase());
+      return matchesType && matchesSearch;
+    });
+  }, [cases, typeFilter, search]);
+
+  return (
+    <div className="stack">
+      {!embedded ? (
+        <>
+          <h2>Upload & Assign</h2>
+          <p>
+            Review imported rows here, assign each row to the correct category, and confirm them before they affect holdings.
+          </p>
+        </>
+      ) : (
+        <div className="card">
+          <h2 style={{ marginTop: 0, marginBottom: 8 }}>Assignments</h2>
+          <p style={{ marginBottom: 0 }}>
+            Review imported rows here immediately after upload. Confirm, amend, ignore, or reject them before they affect holdings.
+          </p>
+        </div>
+      )}
+
+      <div className="card" style={{ padding: 10 }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(180px, 1fr))',
+            gap: 10
+          }}
+        >
+          <label>
+            <div>Status</div>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: '100%', padding: 6 }}>
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="amended">Amended</option>
+              <option value="ignored">Ignored</option>
+              <option value="rejected">Rejected</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+
+          <label>
+            <div>Assigned Type</div>
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} style={{ width: '100%', padding: 6 }}>
+              <option value="all">All</option>
+              <option value="purchase">Purchase</option>
+              <option value="transfer_in">Transfer In</option>
+              <option value="transfer_out">Transfer Out</option>
+              <option value="depot_fee">Depot Fee</option>
+              <option value="switch">Switch</option>
+              <option value="manual_switch">Manual Switch</option>
+              <option value="sale">Sale</option>
+              <option value="unknown">Unknown</option>
+              <option value="ignored">Ignored</option>
+            </select>
+          </label>
+
+          <label>
+            <div>Search</div>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Definition, Notes, Date"
+              style={{ width: '100%', padding: 6, boxSizing: 'border-box' }}
+            />
+          </label>
+        </div>
+      </div>
+
+      {loading ? (
+        <p>Loading assignments...</p>
+      ) : (
+        <ReconciliationTable
+          cases={filteredCases}
+          refresh={refresh}
+          currentStatus={status}
+          onProcessed={handleProcessed}
+        />
+      )}
+    </div>
+  );
+}

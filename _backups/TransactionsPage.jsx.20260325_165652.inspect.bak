@@ -1,0 +1,316 @@
+﻿import { useEffect, useMemo, useState } from 'react';
+import client from '../api/client';
+
+function titleCaseMetal(value) {
+  if (!value) return '-';
+  return String(value).charAt(0).toUpperCase() + String(value).slice(1).toLowerCase();
+}
+
+function titleCaseType(value) {
+  if (!value) return '-';
+  const normalized = String(value).toLowerCase();
+
+  if (normalized === 'switch' || normalized === 'switch_out') return 'Switch';
+  if (normalized === 'switch_pilot') return 'Switch Pilot';
+  if (normalized === 'manual_switch') return 'Manual Switch';
+  if (normalized === 'depot_fee' || normalized === 'storage_fee') return 'Depot Fee';
+  if (normalized === 'transfer_out') return 'Transfer Out';
+  if (normalized === 'transfer_in') return 'Transfer In';
+  if (normalized === 'sale') return 'Sale';
+  if (normalized === 'purchase') return 'Purchase';
+
+  return String(value)
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function roundNumber(value, digits = 2) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return num.toFixed(digits);
+}
+
+function calculateProjectedGain(currentMetal, qty, basisRatio, forecastRatio, feePercent = 3) {
+  const quantity = Number(qty);
+  const purchaseRatio = Number(basisRatio);
+  const futureRatio = Number(forecastRatio);
+  const fee = Number(feePercent);
+
+  if (!Number.isFinite(quantity) || !Number.isFinite(purchaseRatio) || !Number.isFinite(futureRatio)) {
+    return null;
+  }
+
+  if (quantity <= 0 || purchaseRatio <= 0 || futureRatio <= 0) {
+    return null;
+  }
+
+  const feeMultiplier = (100 - fee) / 100;
+  if (feeMultiplier <= 0) {
+    return null;
+  }
+
+  let baseline;
+  let projected;
+
+  if (String(currentMetal).toLowerCase() === 'silver') {
+    baseline = quantity / feeMultiplier / purchaseRatio;
+    projected = quantity / futureRatio * feeMultiplier;
+  } else if (String(currentMetal).toLowerCase() === 'gold') {
+    baseline = quantity / feeMultiplier * purchaseRatio;
+    projected = quantity * futureRatio * feeMultiplier;
+  } else {
+    return null;
+  }
+
+  if (!Number.isFinite(baseline) || baseline <= 0 || !Number.isFinite(projected)) {
+    return null;
+  }
+
+  return ((projected - baseline) / baseline) * 100;
+}
+
+function displayHistoryMetal(step, fallbackMetal) {
+  const type = String(step?.type || '').toLowerCase();
+  const fromMetal = step?.from_metal ? titleCaseMetal(step.from_metal) : '';
+  const toMetal = step?.to_metal ? titleCaseMetal(step.to_metal) : '';
+
+  if (type === 'switch' && fromMetal && toMetal) {
+    return `${fromMetal} -> ${toMetal}`;
+  }
+
+  return titleCaseMetal(step?.metal || fallbackMetal);
+}
+
+export default function TransactionsPage() {
+  const [rows, setRows] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [forecastRatios, setForecastRatios] = useState({});
+  const [expanded, setExpanded] = useState({});
+  const [showDepotFeesByLot, setShowDepotFeesByLot] = useState({});
+
+  const refresh = async () => {
+    const response = await client.get('/dashboard/current-holdings-ledger');
+    setRows(response.data?.holdings || []);
+    setSummary(response.data?.summary || null);
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const displayRows = useMemo(() => {
+    return (rows || []).map((row) => {
+      const forecastRatio = forecastRatios[row.lot_key] ?? '';
+      const projectedGain = calculateProjectedGain(
+        row.metal,
+        row.quantity_grams,
+        row.basis_ratio,
+        forecastRatio,
+        3
+      );
+
+      const depotFeeRows = (row.history || []).filter((h) =>
+        ['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase())
+      );
+
+      const depotFeeTotal = depotFeeRows.reduce((sum, h) => {
+        const n = Number(h.quantity_grams);
+        return sum + (Number.isFinite(n) ? n : 0);
+      }, 0);
+
+      const showDepotFees = !!showDepotFeesByLot[row.lot_key];
+
+      const filteredHistory = (row.history || []).filter((h) => {
+        if (showDepotFees) return true;
+        return !['depot_fee', 'storage_fee'].includes(String(h.type || '').toLowerCase());
+      });
+
+      const orderedHistory = [...filteredHistory];
+
+      return {
+        ...row,
+        forecastRatio,
+        projectedGain,
+        filteredHistory: orderedHistory,
+        showDepotFees,
+        depotFeeCount: depotFeeRows.length,
+        depotFeeTotal
+      };
+    });
+  }, [rows, forecastRatios, showDepotFeesByLot]);
+
+  const toggleExpanded = (lotKey) => {
+    setExpanded((prev) => ({ ...prev, [lotKey]: !prev[lotKey] }));
+  };
+
+  const toggleDepotFees = (lotKey) => {
+    setShowDepotFeesByLot((prev) => ({ ...prev, [lotKey]: !prev[lotKey] }));
+  };
+
+  const updateForecastRatio = (lotKey, value) => {
+    setForecastRatios((prev) => ({ ...prev, [lotKey]: value }));
+  };
+
+  return (
+    <div className="stack">
+      <div className="card">
+        <h2>Current Portfolio</h2>
+        <p>
+          This page shows only what is currently held now. Older forms of the metal are shown inside the expandable history.
+        </p>
+
+        {summary ? (
+          <div className="grid-4">
+            <div><strong>Gold now:</strong> {summary.gold_grams}</div>
+            <div><strong>Silver now:</strong> {summary.silver_grams}</div>
+            <div><strong>Switches:</strong> {summary.switch_count}</div>
+            <div><strong>Storage / Depot fees:</strong> {summary.storage_fee_grams}</div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="card" style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', padding: '8px' }}>Date</th>
+              <th style={{ textAlign: 'left', padding: '8px' }}>Metal</th>
+              <th style={{ textAlign: 'left', padding: '8px' }}>Grams</th>
+              <th style={{ textAlign: 'left', padding: '8px' }}>ID</th>
+              <th style={{ textAlign: 'left', padding: '8px' }}>Purchase Ratio</th>
+              <th style={{ textAlign: 'left', padding: '8px' }}>Forecast Ratio</th>
+              <th style={{ textAlign: 'left', padding: '8px' }}>Projected Gain</th>
+              <th style={{ textAlign: 'left', padding: '8px' }}>History</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayRows.map((row) => (
+              <FragmentRow
+                key={row.lot_key}
+                row={row}
+                expanded={!!expanded[row.lot_key]}
+                onToggle={() => toggleExpanded(row.lot_key)}
+                onForecastChange={(value) => updateForecastRatio(row.lot_key, value)}
+                onToggleDepotFees={() => toggleDepotFees(row.lot_key)}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FragmentRow({ row, expanded, onToggle, onForecastChange, onToggleDepotFees }) {
+  return (
+    <>
+      <tr>
+        <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{row.opened_on || '-'}</td>
+        <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{titleCaseMetal(row.metal)}</td>
+        <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>{roundNumber(row.quantity_grams, 4)}</td>
+        <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb', fontFamily: 'monospace', fontSize: 12 }}>
+          {row.display_transaction_code || '-'}
+        </td>
+        <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+          {row.basis_ratio == null ? '-' : roundNumber(row.basis_ratio, 2)}
+        </td>
+        <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+          <input
+            type="number"
+            step="0.01"
+            value={row.forecastRatio}
+            onChange={(e) => onForecastChange(e.target.value)}
+            placeholder="e.g. 70"
+            style={{ width: 90, padding: '6px' }}
+          />
+        </td>
+        <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+          {row.projectedGain == null ? '-' : `${roundNumber(row.projectedGain, 2)}%`}
+        </td>
+        <td style={{ padding: '8px', borderTop: '1px solid #e5e7eb' }}>
+          <button onClick={onToggle}>
+            {expanded ? 'Hide History' : 'Show History'}
+          </button>
+        </td>
+      </tr>
+
+      {expanded ? (
+        <tr>
+          <td colSpan="8" style={{ padding: '10px 12px', background: '#f8fafc', borderTop: '1px solid #e5e7eb' }}>
+            <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+              <div>
+                <strong>Transaction ancestry</strong>
+                {row.showDepotFees ? (
+                  <div style={{ marginTop: 4, fontSize: 12, color: '#475569' }}>
+                    Total depot fees: {roundNumber(row.depotFeeTotal, 5)} g
+                  </div>
+                ) : null}
+              </div>
+
+              <button
+                type="button"
+                onClick={onToggleDepotFees}
+                style={{
+                  display: 'inline-block',
+                  width: 'auto',
+                  minWidth: 0,
+                  padding: '5px 9px',
+                  fontSize: 11,
+                  lineHeight: 1.2,
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  color: '#111827',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flex: '0 0 auto'
+                }}
+              >
+                {row.showDepotFees ? 'Hide Depot Fees' : 'Show Depot Fees'}
+              </button>
+            </div>
+
+            {row.showDepotFees && row.depotFeeCount === 0 ? (
+              <div style={{ marginBottom: 10, fontSize: 12, color: '#475569' }}>
+                No depot fee entries were found in this holding history yet.
+              </div>
+            ) : null}
+
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', padding: '6px' }}>Date</th>
+                  <th style={{ textAlign: 'left', padding: '6px' }}>Type</th>
+                  <th style={{ textAlign: 'left', padding: '6px' }}>Metal</th>
+                  <th style={{ textAlign: 'left', padding: '6px' }}>Ratio</th>
+                  <th style={{ textAlign: 'left', padding: '6px' }}>Grams</th>
+                  <th style={{ textAlign: 'left', padding: '6px' }}>ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(row.filteredHistory || []).slice().reverse().map((h, index) => (
+                  <tr key={`${row.lot_key}-${index}`}>
+                    <td style={{ padding: '6px', borderTop: '1px solid #e5e7eb' }}>{h.date || '-'}</td>
+                    <td style={{ padding: '6px', borderTop: '1px solid #e5e7eb' }}>{titleCaseType(h.type)}</td>
+                    <td style={{ padding: '6px', borderTop: '1px solid #e5e7eb' }}>
+                      {displayHistoryMetal(h, row.metal)}
+                    </td>
+                    <td style={{ padding: '6px', borderTop: '1px solid #e5e7eb' }}>
+                      {h.ratio == null ? '-' : roundNumber(h.ratio, 2)}
+                    </td>
+                    <td style={{ padding: '6px', borderTop: '1px solid #e5e7eb' }}>
+                      {h.quantity_grams == null ? '-' : roundNumber(h.quantity_grams, 5)}
+                    </td>
+                    <td style={{ padding: '6px', borderTop: '1px solid #e5e7eb', fontFamily: 'monospace', fontSize: 12 }}>
+                      {h.transaction_code || h.transaction_id || '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}

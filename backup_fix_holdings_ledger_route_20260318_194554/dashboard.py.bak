@@ -1,0 +1,47 @@
+﻿from flask import Blueprint, request
+from flask_jwt_extended import get_jwt_identity, jwt_required
+
+from ..services.dashboard import calculator, calculator_preview, holdings_summary, list_calculator_scenarios, save_calculator_scenario
+
+
+dashboard_bp = Blueprint("dashboard", __name__)
+
+
+@dashboard_bp.get("/summary")
+@jwt_required()
+def summary():
+    return holdings_summary(get_jwt_identity())
+
+
+@dashboard_bp.get("/calculator")
+@jwt_required()
+def run_calculator():
+    ratio = float(request.args.get("target_ratio", request.args.get("future_ratio", "80")))
+    fee_percent = float(request.args.get("fee_percent", "3"))
+    return calculator_preview(get_jwt_identity(), ratio, fee_percent)
+
+
+@dashboard_bp.post("/calculator/preview")
+@jwt_required()
+def preview_calculator():
+    data = request.get_json() or {}
+    ratio = float(data.get("future_ratio", data.get("target_ratio", 80)))
+    fee_percent = float(data.get("fee_percent", 3))
+    return calculator_preview(get_jwt_identity(), ratio, fee_percent)
+
+
+@dashboard_bp.get("/calculator/scenarios")
+@jwt_required()
+def get_saved_scenarios():
+    return list_calculator_scenarios(get_jwt_identity())
+
+
+@dashboard_bp.post("/calculator/scenarios")
+@jwt_required()
+def save_scenario():
+    data = request.get_json() or {}
+    ratio = float(data.get("future_ratio", data.get("target_ratio", 80)))
+    fee_percent = float(data.get("fee_percent", 3))
+    scenario_name = data.get("scenario_name")
+    notes = data.get("notes")
+    return save_calculator_scenario(get_jwt_identity(), ratio, fee_percent, scenario_name, notes), 201

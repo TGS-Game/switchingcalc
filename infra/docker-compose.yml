@@ -1,0 +1,39 @@
+﻿services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: metals
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/metals
+      JWT_SECRET_KEY: super-secret-jwt-key-please-change-this-1234567890
+      SECRET_KEY: super-secret-flask-key-please-change-this-1234567890
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_URL: http://localhost:8000/api
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+
+volumes:
+  postgres_data:
+

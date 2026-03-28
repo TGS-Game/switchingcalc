@@ -1,0 +1,14 @@
+﻿node_modules/
+dist/
+build/
+.vite/
+.env
+.env.*
+__pycache__/
+*.pyc
+venv/
+.venv/
+backups/
+.DS_Store
+.vscode/
+.idea/

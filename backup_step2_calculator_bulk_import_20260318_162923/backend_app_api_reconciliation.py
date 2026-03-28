@@ -1,0 +1,33 @@
+﻿from flask import Blueprint, request
+from flask_jwt_extended import get_jwt_identity, jwt_required
+
+from ..services.audit import write_audit
+from ..services.reconciliation import apply_review_action, list_review_items
+
+
+reconciliation_bp = Blueprint("reconciliation", __name__)
+
+
+@reconciliation_bp.get("")
+@jwt_required()
+def list_cases():
+    user_id = get_jwt_identity()
+    status = request.args.get("status", "pending")
+    return list_review_items(user_id, status=status)
+
+
+@reconciliation_bp.post("/<suggestion_id>/resolve")
+@jwt_required()
+def resolve(suggestion_id):
+    user_id = get_jwt_identity()
+    payload = request.get_json() or {}
+    result = apply_review_action(user_id, suggestion_id, payload)
+    write_audit(
+        user_id,
+        user_id,
+        "suggestion_reviewed",
+        "suggested_transaction",
+        suggestion_id,
+        after=result,
+    )
+    return result

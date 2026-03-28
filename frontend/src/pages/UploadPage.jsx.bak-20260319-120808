@@ -1,0 +1,92 @@
+import { useEffect, useRef, useState } from 'react';
+import FileUploader from '../components/FileUploader';
+import ReconciliationPage from './ReconciliationPage';
+
+export default function UploadPage() {
+  const [uploadResult, setUploadResult] = useState(null);
+  const [reviewKey, setReviewKey] = useState(0);
+  const reviewRef = useRef(null);
+
+  useEffect(() => {
+    if (!uploadResult || uploadResult.error) return;
+
+    const timer = setTimeout(() => {
+      reviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [uploadResult]);
+
+  const handleUploaded = (result) => {
+    setUploadResult(result);
+    if (!result?.error) {
+      setReviewKey((prev) => prev + 1);
+    }
+  };
+
+  return (
+    <div className="stack">
+      <div className="card">
+        <h2 style={{ marginTop: 0 }}>Upload statement CSV</h2>
+        <p style={{ marginBottom: 8 }}>
+          Upload and review now happen in one guided flow.
+        </p>
+        <div style={{ color: '#475569', fontSize: 14, lineHeight: 1.6 }}>
+          Step 1: Upload the CSV exactly as-is.<br />
+          Step 2: Review suggested transactions below.<br />
+          Step 3: Confirm, amend, ignore, or reject rows before they affect holdings.
+        </div>
+      </div>
+
+      <FileUploader onUploaded={handleUploaded} />
+
+      {uploadResult ? (
+        <div
+          className="card"
+          style={{
+            border: uploadResult.error ? '1px solid #dc2626' : '1px solid #16a34a',
+            background: uploadResult.error ? '#fef2f2' : '#f0fdf4'
+          }}
+        >
+          <h3 style={{ marginTop: 0, marginBottom: 10 }}>
+            {uploadResult.error ? 'Upload failed' : 'Upload complete'}
+          </h3>
+
+          <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+            <div><strong>File:</strong> {uploadResult.fileName || '-'}</div>
+            {!uploadResult.error ? (
+              <>
+                <div><strong>New rows processed:</strong> {uploadResult.newRowCount}</div>
+                <div><strong>Duplicate rows skipped:</strong> {uploadResult.skippedDuplicateCount}</div>
+                <div><strong>Suggested review rows:</strong> {uploadResult.suggestionCount}</div>
+              </>
+            ) : null}
+            <div style={{ marginTop: 8 }}>{uploadResult.message}</div>
+          </div>
+
+          {!uploadResult.error ? (
+            <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => reviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              >
+                Go to Reconciliation
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div ref={reviewRef} className="stack">
+        <div className="card">
+          <h2 style={{ marginTop: 0, marginBottom: 8 }}>Reconciliation</h2>
+          <p style={{ marginBottom: 0 }}>
+            Review imported rows here immediately after upload. Pending rows stay here until you confirm, amend, ignore, or reject them.
+          </p>
+        </div>
+
+        <ReconciliationPage key={reviewKey} />
+      </div>
+    </div>
+  );
+}
